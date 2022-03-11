@@ -1,0 +1,18 @@
+# Summary
+[Introduction](./intro/intro.md)
+
+- [This Book](./intro/goal.md)
+    - [A Message](./intro/message.md)
+- [Concurrency](./concurrency/intro.md)
+    - [Keywords](./concurrency/keywords.md)
+    - [Concepts](./concurrency/concepts.md)
+- [Introduction to Atomics](./atomics/intro.md)
+    - [What are Atomics?](./atomics/what_are_atomics.md)
+    - [What are Memory Orderings?](./atomics/memory_orderings.md)
+    - [Compare-and-Swap](./atomics/cas.md)
+- [Introduction to the Paper](./paper/intro.md)
+- [Starting Code](./code/starting_code.md)
+- [Memory Allocation](./code/alloc/alloc.md)
+
+- [Acknowledgements](./closing/acknowledgements.md)
+- [Helpful Resources](./closing/resources.md)

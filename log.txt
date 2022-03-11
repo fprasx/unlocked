@@ -1,0 +1,25 @@
+VecPush
+3FEB2022
+Spinlock at end of vector
+
+AtomicRefCell
+7FEB2022
+Started implementing atomic refcell which might be incorporated
+into thread safe vec
+maybe something like Vec<AtomicRefCell<T>>
+
+8FEB2022
+I realized that the borrow-state of the refcell cannot be implemented
+with an enum, as modifications wouldn't be atomic. I'm going to use an 
+AtomicIsize instead. -1 means mutably borrowed, 0 means unborrowed,
+and anything greater is the number of immutable borrows 
+
+Realization: In general, I know how to implement the AtomicRefCell. 
+However, as I was implementing it the first time, I tried to implement 
+too many things at once. By the time I realized the basic flaw of my 
+implementation, it was too late. Next time, I'm going to start by implementing
+one thing at a time and writing more tests from the get go.
+
+11FEB2022
+Going to start with implementing a simple vector for practice. Then,
+will make pushing and popping thread safe. 
