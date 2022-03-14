@@ -53,12 +53,12 @@ where
     pub fn new() -> Self {
         // This reference is never used again
         let write_desc: *mut Option<WriteDescriptor<T>> =
-            &Option::<WriteDescriptor<T>>::None as *const _ as *mut _;
-        let descriptor = &Descriptor::<T> {
+            Box::into_raw(Box::new(Option::<WriteDescriptor<T>>::None));
+        let descriptor = Box::into_raw(Box::new(Descriptor::<T> {
             pending: AtomicPtr::new(write_desc),
             size: 0,
             counter: 0,
-        } as *const Descriptor<T> as *mut Descriptor<T>;
+        }));
         let buffers = [ATOMIC_NULLPTR; 60];
         Self {
             descriptor: AtomicPtr::new(descriptor),
@@ -115,65 +115,44 @@ where
         7. Call complete_write to finish the write
          */
 
-        let mut current_desc = unsafe { &*self.descriptor.load(Ordering::Acquire) };
-        // Complete a pending write op if there is anu
-        let mut pending = unsafe { &*current_desc.pending.load(Ordering::Acquire) };
-        self.complete_write(pending);
-        // Allocate memory if need be
-        let mut bucket = (highest_bit(current_desc.size + FIRST_BUCKET_SIZE)
-            - highest_bit(FIRST_BUCKET_SIZE)) as usize;
-        if self.buffers[bucket].load(Ordering::Acquire) == std::ptr::null_mut::<AtomicUsize>() {
-            self.allocate_bucket(bucket)
-        }
-        // Make a new WriteDescriptor
-        let mut last_elem_ptr = unsafe { &*self.get(current_desc.size) };
-        let mut write_desc: Option<WriteDescriptor<T>> = Some(WriteDescriptor {
-            old: last_elem_ptr.load(Ordering::Acquire),
-            new: unsafe { std::mem::transmute_copy::<T, usize>(&elem) },
-            // TODO: see if we can just use a reference
-            location: last_elem_ptr,
-            _marker: PhantomData,
-        });
-        let mut next_desc = Descriptor::<T> {
-            pending: AtomicPtr::new(&write_desc as *const _ as *mut _),
-            size: current_desc.size,
-            counter: 0,
-        };
-        while AtomicPtr::compare_exchange(
-            &self.descriptor,
-            current_desc as *const _ as *mut _,
-            &next_desc as *const _ as *mut _,
-            Ordering::AcqRel,
-            Ordering::Relaxed,
-        )
-        .is_err()
-        {
-            current_desc = unsafe { &*self.descriptor.load(Ordering::Acquire) };
+        loop {
+            let current_desc = unsafe { &*self.descriptor.load(Ordering::Acquire) };
             // Complete a pending write op if there is anu
-            pending = unsafe { &*current_desc.pending.load(Ordering::Acquire) };
+            let pending = unsafe { &*current_desc.pending.load(Ordering::Acquire) };
             self.complete_write(pending);
             // Allocate memory if need be
-            bucket = (highest_bit(current_desc.size + FIRST_BUCKET_SIZE)
+            let bucket = (highest_bit(current_desc.size + FIRST_BUCKET_SIZE)
                 - highest_bit(FIRST_BUCKET_SIZE)) as usize;
             if self.buffers[bucket].load(Ordering::Acquire) == std::ptr::null_mut::<AtomicUsize>() {
                 self.allocate_bucket(bucket)
             }
             // Make a new WriteDescriptor
-            last_elem_ptr = unsafe { &*self.get(current_desc.size) };
+            let last_elem_ptr = unsafe { &*self.get(current_desc.size) };
             // TODO: see if we can just use a reference
-            write_desc = Some(WriteDescriptor {
+            let write_desc = Box::into_raw(Box::new(Some(WriteDescriptor {
                 old: last_elem_ptr.load(Ordering::Acquire),
                 new: unsafe { std::mem::transmute_copy::<T, usize>(&elem) },
                 location: last_elem_ptr,
                 _marker: PhantomData,
-            });
-            next_desc = Descriptor::<T> {
-                pending: AtomicPtr::new(&write_desc as *const _ as *mut _),
+            })));
+            let next_desc = Box::into_raw(Box::new(Descriptor::<T> {
+                pending: AtomicPtr::new(write_desc),
                 size: current_desc.size,
                 counter: 0,
-            };
+            }));
+            if AtomicPtr::compare_exchange(
+                &self.descriptor,
+                current_desc as *const _ as *mut _,
+                next_desc,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            )
+            .is_ok()
+            {
+                self.complete_write(unsafe { &*((*next_desc).pending.load(Ordering::Acquire)) });
+                break;
+            }
         }
-        self.complete_write(unsafe { &*next_desc.pending.load(Ordering::Acquire) })
     }
 
     pub fn pop(&self) -> Option<T> {
@@ -186,44 +165,32 @@ where
         6. Go back to step 1 if CAS failed
         7. Return the element that was read in from the end of the array
         */
-        let mut current_desc = unsafe { &*self.descriptor.load(Ordering::Acquire) };
-        let mut pending = unsafe { &*current_desc.pending.load(Ordering::Acquire) };
-        self.complete_write(pending);
-        // If this weren't here, we would panic on subtracting one from 0
-        // Also this is the logically correct thing to do
-        if current_desc.size == 0 {
-            return None;
-        }
-        let mut elem = unsafe { &*self.get(current_desc.size - 1) }.load(Ordering::Acquire);
-        let mut next_desc = Descriptor::<T> {
-            size: current_desc.size,
-            pending: AtomicPtr::new(&mut None as *mut Option<WriteDescriptor<T>>),
-            counter: 0,
-        };
-        while AtomicPtr::compare_exchange(
-            &self.descriptor,
-            current_desc as *const _ as *mut _,
-            &next_desc as *const _ as *mut _,
-            Ordering::AcqRel,
-            Ordering::Relaxed,
-        )
-        .is_err()
-        {
-            current_desc = unsafe { &*self.descriptor.load(Ordering::Acquire) };
-            pending = unsafe { &*current_desc.pending.load(Ordering::Acquire) };
+        loop {
+            let current_desc = unsafe { &*self.descriptor.load(Ordering::Acquire) };
+            let pending = unsafe { &*current_desc.pending.load(Ordering::Acquire) };
             self.complete_write(pending);
-            elem = unsafe { &*self.get(current_desc.size - 1) }.load(Ordering::Acquire);
-            next_desc = Descriptor::<T> {
+            let elem = unsafe { &*self.get(current_desc.size - 1) }.load(Ordering::Acquire);
+            let next_desc = Box::into_raw(Box::new(Descriptor::<T> {
                 size: current_desc.size,
                 pending: AtomicPtr::new(&mut None as *mut Option<WriteDescriptor<T>>),
                 counter: 0,
-            };
+            }));
+            if AtomicPtr::compare_exchange(
+                &self.descriptor,
+                current_desc as *const _ as *mut _,
+                next_desc,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            )
+            .is_ok()
+            {
+                return Some(unsafe { std::mem::transmute_copy::<usize, T>(&elem) });
+            }
         }
         // SAFETY
         // This is ok because only 64-bit values can be stored in the vector
         // We also know that elem is a valid T because it was transmuted into a usize
         // from a valid T, therefore we are only transmuting it back
-        Some(unsafe { std::mem::transmute_copy::<usize, T>(&elem) })
     }
 
     // *** MEMORY ***
