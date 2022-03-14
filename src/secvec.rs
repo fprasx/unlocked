@@ -17,31 +17,34 @@ pub const ATOMIC_NULLPTR: AtomicPtr<AtomicUsize> =
     AtomicPtr::new(std::ptr::null_mut::<AtomicUsize>());
 
 // TODO: make generic parameter N: the number of buckets
+#[derive(Debug)]
 pub struct SecVec<'a, T: Sized> {
     // Enough space to hold usize::MAX elements
     // Using array because growing a slice/vector might require more synchronization
     // which kinda defeats the whole lock-free part
     // However, this IS a HUGE storage overhead to consider; 480 bytes
-    buffers: [AtomicPtr<AtomicUsize>; 60],
-    descriptor: AtomicPtr<Descriptor<'a, T>>,
+    pub buffers: [AtomicPtr<AtomicUsize>; 60],
+    pub descriptor: AtomicPtr<Descriptor<'a, T>>,
     // The data is technically stored as usizes, but it's really just transmuted T's
-    _marker: PhantomData<T>,
+    pub _marker: PhantomData<T>,
 }
 
-struct Descriptor<'a, T: Sized> {
+#[derive(Debug)]
+pub struct Descriptor<'a, T: Sized> {
     // This pointer doesn't need to be atomic as
     // pending writes are CAS'd in so duplicates won't happen
-    pending: AtomicPtr<Option<WriteDescriptor<'a, T>>>,
-    size: usize,
+    pub pending: AtomicPtr<Option<WriteDescriptor<'a, T>>>,
+    pub size: usize,
     // For reference counting?
-    counter: usize,
+    pub counter: usize,
 }
 
-struct WriteDescriptor<'a, T: Sized> {
-    new: usize,
-    old: usize,
-    location: &'a AtomicUsize,
-    _marker: PhantomData<T>,
+#[derive(Debug)]
+pub struct WriteDescriptor<'a, T: Sized> {
+    pub new: usize,
+    pub old: usize,
+    pub location: &'a AtomicUsize,
+    pub _marker: PhantomData<T>,
 }
 
 impl<'a, T> SecVec<'a, T>
@@ -85,7 +88,7 @@ where
         }
     }
 
-    fn complete_write(&self, pending: &Option<WriteDescriptor<T>>) {
+    pub fn complete_write(&self, pending: &Option<WriteDescriptor<T>>) {
         /*
         1. Check if there is a writeop (write-descriptor) pending
         2. If so, CAS the location in the buffer with the new value
@@ -123,7 +126,7 @@ where
             // Allocate memory if need be
             let bucket = (highest_bit(current_desc.size + FIRST_BUCKET_SIZE)
                 - highest_bit(FIRST_BUCKET_SIZE)) as usize;
-            if self.buffers[bucket].load(Ordering::Acquire) == std::ptr::null_mut::<AtomicUsize>() {
+            if self.buffers[bucket].load(Ordering::Acquire).is_null() {
                 self.allocate_bucket(bucket)
             }
             // Make a new WriteDescriptor
@@ -137,7 +140,7 @@ where
             })));
             let next_desc = Box::into_raw(Box::new(Descriptor::<T> {
                 pending: AtomicPtr::new(write_desc),
-                size: current_desc.size,
+                size: current_desc.size + 1,
                 counter: 0,
             }));
             if AtomicPtr::compare_exchange(
@@ -171,7 +174,7 @@ where
             self.complete_write(pending);
             let elem = unsafe { &*self.get(current_desc.size - 1) }.load(Ordering::Acquire);
             let next_desc = Box::into_raw(Box::new(Descriptor::<T> {
-                size: current_desc.size,
+                size: current_desc.size - 1,
                 pending: AtomicPtr::new(&mut None as *mut Option<WriteDescriptor<T>>),
                 counter: 0,
             }));
@@ -296,10 +299,10 @@ impl<'a, T> Default for SecVec<'a, T> {
 #[cfg(test)]
 mod test {
     use super::SecVec;
-
     #[test]
-    fn new_does_not_sigsegv() {
-        let _sv = SecVec::<isize>::new();
+    #[cfg(miri)]
+    fn new_does_not_cause_ub() {
+        let _sv = SecVec::<isize>::new(); 
     }
 
     #[test]
@@ -307,5 +310,16 @@ mod test {
         let sv = SecVec::<isize>::new();
         sv.push(-69);
         assert_eq!(sv.pop(), Some(-69))
+    }
+
+    #[test] 
+    fn thousand_push_thousand_pop() {
+        let sv = SecVec::<isize>::new();
+        for _ in 0..1000 {
+            sv.push(-69);
+        }
+        for _ in 0..1000 {
+            assert!(sv.pop().is_some())
+        }
     }
 }
