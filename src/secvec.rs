@@ -11,20 +11,19 @@
 extern crate alloc;
 use crate::highest_bit;
 use alloc::alloc::{Allocator, Global};
+use alloc::boxed::Box;
 use core::alloc::Layout;
 use core::fmt::Debug;
 use core::marker::PhantomData;
-use core::ptr::*;
+use core::mem::{self, ManuallyDrop};
+use core::ptr::{self, null_mut};
 use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
-use std::mem::ManuallyDrop;
-use std::thread::current;
 
 pub const FIRST_BUCKET_SIZE: usize = 8;
 
 /// An AtomicPtr containing a null-pointer to an AtomicUsize
 #[allow(clippy::declare_interior_mutable_const)] // We actually do want this to be copied
-pub const ATOMIC_NULLPTR: AtomicPtr<AtomicUsize> =
-    AtomicPtr::new(std::ptr::null_mut::<AtomicUsize>());
+pub const ATOMIC_NULLPTR: AtomicPtr<AtomicUsize> = AtomicPtr::new(ptr::null_mut::<AtomicUsize>());
 
 // TODO: make generic parameter N: the number of buckets
 #[derive(Debug)]
@@ -33,34 +32,36 @@ pub struct SecVec<'a, T: Sized> {
     // Using array because growing a slice/vector might require more synchronization
     // which kinda defeats the whole lock-free part
     // However, this IS a HUGE storage overhead to consider; 480 bytes
-    pub buffers: [AtomicPtr<AtomicUsize>; 60],
-    pub descriptor: AtomicPtr<Descriptor<'a, T>>,
+    buffers: [AtomicPtr<AtomicUsize>; 60],
+    descriptor: AtomicPtr<Descriptor<'a, T>>,
     // The data is technically stored as usizes, but it's really just transmuted T's
-    pub _marker: PhantomData<T>,
+    _marker: PhantomData<T>,
 }
 
 #[derive(Debug)]
-pub struct Descriptor<'a, T: Sized> {
-    // This pointer doesn't need to be atomic as
-    // pending writes are CAS'd in so duplicates won't happen
-    pub pending: AtomicPtr<Option<WriteDescriptor<'a, T>>>,
-    pub size: usize,
+struct Descriptor<'a, T: Sized> {
+    pending: AtomicPtr<Option<WriteDescriptor<'a, T>>>,
+    size: usize,
     // For reference counting?
-    pub counter: usize,
+    // TODO: figure out memory reclamation scheme, would be AtomicUsize in that case
+    counter: usize,
 }
 
 #[derive(Debug)]
-pub struct WriteDescriptor<'a, T: Sized> {
-    pub new: usize,
-    pub old: usize,
-    pub location: &'a AtomicUsize,
-    pub _marker: PhantomData<T>,
+struct WriteDescriptor<'a, T: Sized> {
+    new: usize,
+    old: usize,
+    location: &'a AtomicUsize,
+    // Both new and old are just  T's transmuted into usize
+    _marker: PhantomData<T>,
+    // TODO: do we need another PhantomData for the atomicusize?
+    // `location` is a reference to the AtomicUsize that will hold `new`
+    // _ref_marker: PhantomData<&'a T>
 }
 
 impl<'a, T> SecVec<'a, T>
 where
-    // TODO: remove debug bound, it is only for debugging
-    T: Sized + Debug,
+    T: Sized,
 {
     // TODO: add lazy allocation
     // Maybe use NonNull::dangling()
@@ -82,7 +83,7 @@ where
     }
 
     // Return a *const T to the index specified
-    pub fn get(&self, i: usize) -> *const AtomicUsize {
+    fn get(&self, i: usize) -> *const AtomicUsize {
         let pos = i + FIRST_BUCKET_SIZE;
         // The highest bit set in pos
         let hibit = highest_bit(pos);
@@ -95,12 +96,13 @@ where
             // We know that we can offset the pointer because we will have allocated a bucket
             // to store the value
             // And this function is not part of the public API
-            // TODO: ensure that the index does not overflow
+            // TODO: ensure that the index does not overflow, probaly can't, looking at calcualtions in function,
+            // but just check to make sure
             buffer.load(Ordering::Acquire).add(index)
         }
     }
 
-    pub fn complete_write(&self, pending: &Option<WriteDescriptor<T>>) {
+    fn complete_write(&self, pending: &Option<WriteDescriptor<T>>) {
         /*
         1. Check if there is a writeop (write-descriptor) pending
         2. If so, CAS the location in the buffer with the new value
@@ -167,7 +169,7 @@ where
             let last_elem = unsafe { &*self.get(current_desc.size) };
             let write_desc = WriteDescriptor::<T>::some_new_as_ptr(
                 // TODO: address this in macro
-                unsafe { std::mem::transmute_copy::<T, usize>(&elem) }, // SAFE because we know T has correct size
+                unsafe { mem::transmute_copy::<T, usize>(&elem) }, // SAFE because we know T has correct size
                 last_elem.load(Ordering::Acquire), // Load from the AtomicUsize, which really containes the bytes for T
                 last_elem,
             );
@@ -238,7 +240,7 @@ where
                 // This is ok because only 64-bit values can be stored in the vector
                 // We also know that elem is a valid T because it was transmuted into a usize
                 // from a valid T, therefore we are only transmuting it back
-                return Some(unsafe { std::mem::transmute_copy::<usize, T>(&elem) });
+                return Some(unsafe { mem::transmute_copy::<usize, T>(&elem) });
             }
         }
     }
@@ -340,7 +342,7 @@ where
         // and we free the memory we just allocated
         if self.buffers[bucket]
             .compare_exchange(
-                std::ptr::null_mut::<AtomicUsize>(),
+                ptr::null_mut::<AtomicUsize>(),
                 ptr,
                 Ordering::AcqRel,
                 Ordering::Relaxed,
@@ -353,7 +355,7 @@ where
                 // so we can call unwrap() on NonNull::new(). We also know that the pointer
                 // is pointing to the correct memory because we just got it from the allocation.
                 // We know the layout is valid, as it is the same layout we used to allocate.
-                allocator.deallocate(NonNull::new(ptr as *mut u8).unwrap(), layout);
+                allocator.deallocate(ptr::NonNull::new(ptr as *mut u8).unwrap(), layout);
             }
         }
     }
@@ -396,13 +398,36 @@ impl<'a, T> WriteDescriptor<'a, T> {
     }
 }
 
-impl<'a, T> Default for SecVec<'a, T>
-where
-    T: Debug,
-{
+impl<'a, T> Default for SecVec<'a, T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-// TODO: write tests
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn size_starts_at_0() {
+        let sv = SecVec::<usize>::new();
+        assert_eq!(0, sv.size());
+    }
+
+    #[test]
+    fn pop_empty_returns_none() {
+        let sv = SecVec::<usize>::new();
+        assert_eq!(sv.pop(), None);
+    }
+
+    #[test]
+    fn ten_push_ten_pop() {
+        let sv = SecVec::<isize>::new();
+        for i in 0..10 {
+            sv.push(i);
+        }
+        for i in (0..10).rev() {
+            assert_eq!(sv.pop(), Some(i));
+        }
+    }
+}
