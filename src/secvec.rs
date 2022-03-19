@@ -66,14 +66,8 @@ where
     // TODO: add lazy allocation
     // Maybe use NonNull::dangling()
     pub fn new() -> Self {
-        // This reference is never used again
-        let write_desc: *mut Option<WriteDescriptor<T>> =
-            Box::into_raw(Box::new(Option::<WriteDescriptor<T>>::None));
-        let descriptor = Box::into_raw(Box::new(Descriptor::<T> {
-            pending: AtomicPtr::new(write_desc),
-            size: 0,
-            counter: 0,
-        }));
+        let pending = WriteDescriptor::<T>::new_none_as_ptr();
+        let descriptor = Descriptor::<T>::new_as_ptr(pending, 0, 0);
         let buffers = [ATOMIC_NULLPTR; 60];
         Self {
             descriptor: AtomicPtr::new(descriptor),
@@ -120,7 +114,7 @@ where
                 Ordering::AcqRel,
                 Ordering::Relaxed,
             );
-            let new_writedesc = WriteDescriptor::<T>::none_new_as_ptr();
+            let new_writedesc = WriteDescriptor::<T>::new_none_as_ptr();
             // # Safety
             // The pointer is valid to dereference because it started off valid and only pointers made from
             // from Descriptor::new_as_ptr() (which are valid because of Box) are CAS'd in
@@ -167,7 +161,7 @@ where
             // It is safe to dereference the raw pointer because we made sure to allocate
             // memory previously, so it is pointing into valid memory
             let last_elem = unsafe { &*self.get(current_desc.size) };
-            let write_desc = WriteDescriptor::<T>::some_new_as_ptr(
+            let write_desc = WriteDescriptor::<T>::new_some_as_ptr(
                 // TODO: address this in macro
                 unsafe { mem::transmute_copy::<T, usize>(&elem) }, // SAFE because we know T has correct size
                 last_elem.load(Ordering::Acquire), // Load from the AtomicUsize, which really containes the bytes for T
@@ -225,7 +219,7 @@ where
             //
             // There was a use-after-free caused by the &mut None being turned into a raw ptr
             // because the ptr's mem was deallocated when the function returned and the stack frame was destroyed
-            let new_pending = WriteDescriptor::<T>::none_new_as_ptr();
+            let new_pending = WriteDescriptor::<T>::new_none_as_ptr();
             let next_desc = Descriptor::<T>::new_as_ptr(new_pending, current_desc.size - 1, 0);
             if AtomicPtr::compare_exchange_weak(
                 &self.descriptor,
@@ -389,11 +383,11 @@ impl<'a, T> WriteDescriptor<'a, T> {
         }
     }
 
-    pub fn none_new_as_ptr() -> *mut Option<Self> {
+    pub fn new_none_as_ptr() -> *mut Option<Self> {
         Box::into_raw(Box::new(None))
     }
 
-    pub fn some_new_as_ptr(new: usize, old: usize, location: &'a AtomicUsize) -> *mut Option<Self> {
+    pub fn new_some_as_ptr(new: usize, old: usize, location: &'a AtomicUsize) -> *mut Option<Self> {
         Box::into_raw(Box::new(Some(WriteDescriptor::new(new, old, location))))
     }
 }
