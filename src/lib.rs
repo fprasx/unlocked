@@ -44,7 +44,7 @@ macro_rules! get_impl_type {
 /// Return the highest bit set in a number
 /// ```
 /// let x = 1 << 2;
-/// assert_eq!(highest_bit(x), 2)
+/// assert_eq!(lfvec::highest_bit(x), 2)
 /// ```
 pub fn highest_bit(num: usize) -> u32 {
     // Eliminate a jump/branch by not using if statement
