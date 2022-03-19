@@ -1,4 +1,4 @@
-use lfvec::secvec::SecVec;
+use unlocked::secvec::SecVec;
 use std::sync::Arc;
 use std::thread;
 

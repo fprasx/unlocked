@@ -26,13 +26,13 @@ macro_rules! get_impl_type {
         println!("{} has size {}", stringify!($type), size);
         if size == 0 {
         } else if size == 1 {
-            lfvec::vector_impl!($type, u8, AtomicU8)
+            unlocked::vector_impl!($type, u8, AtomicU8)
         } else if size == 2 {
-            lfvec::vector_impl!($type, u16, AtomicU16)
+            unlocked::vector_impl!($type, u16, AtomicU16)
         } else if size <= 4 {
-            lfvec::vector_impl!($type, u32, AtomicU32)
+            unlocked::vector_impl!($type, u32, AtomicU32)
         } else if size <= 8 {
-            lfvec::vector_impl!($type, usize, AtomicUsize)
+            unlocked::vector_impl!($type, usize, AtomicUsize)
         } else {
             panic!(concat!(
                 stringify!($type),
@@ -44,7 +44,7 @@ macro_rules! get_impl_type {
 
 /// Return the highest bit set in a number
 /// ```
-/// # use lfvec::highest_bit;
+/// # use unlocked::highest_bit;
 /// let x = 1 << 2;
 /// assert_eq!(highest_bit(x), 2)
 /// ```
