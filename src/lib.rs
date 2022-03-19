@@ -1,4 +1,5 @@
 #![feature(allocator_api)]
+#![no_std]
 #[allow(unused_imports)]
 #[deny(unused_unsafe)]
 #[macro_use]
@@ -43,8 +44,9 @@ macro_rules! get_impl_type {
 
 /// Return the highest bit set in a number
 /// ```
+/// # use lfvec::highest_bit;
 /// let x = 1 << 2;
-/// assert_eq!(lfvec::highest_bit(x), 2)
+/// assert_eq!(highest_bit(x), 2)
 /// ```
 pub fn highest_bit(num: usize) -> u32 {
     // Eliminate a jump/branch by not using if statement
