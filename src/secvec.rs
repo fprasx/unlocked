@@ -1,3 +1,9 @@
+// CURRENTLY LEAKS MEMORY
+//
+// THAT IS OK
+//
+// HAVE NOT IMPLEMENTED A MEMORY RECLAMATION SCHEME YET
+//
 // TODO: convince compiler we know the size of T
 // https://stackoverflow.com/questions/30330519/compile-time-generic-type-size-check
 // https://github.com/rust-lang/rfcs/blob/master/text/2000-const-generics.md
@@ -399,30 +405,4 @@ where
     }
 }
 
-// #[cfg(test)]
-// mod test {
-//     use super::SecVec;
-//     #[test]
-//     #[cfg(miri)]
-//     fn new_does_not_cause_ub() {
-//         let _sv = SecVec::<isize>::new();
-//     }
-
-//     #[test]
-//     fn one_push_one_pop() {
-//         let sv = SecVec::<isize>::new();
-//         sv.push(-69);
-//         assert_eq!(sv.pop(), Some(-69))
-//     }
-
-//     #[test]
-//     fn thousand_push_thousand_pop() {
-//         let sv = SecVec::<isize>::new();
-//         for _ in 0..1000 {
-//             sv.push(-69);
-//         }
-//         for _ in 0..1000 {
-//             assert!(sv.pop().is_some())
-//         }
-//     }
-// }
+// TODO: write tests
