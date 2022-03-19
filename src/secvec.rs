@@ -6,9 +6,12 @@ extern crate alloc;
 use crate::highest_bit;
 use alloc::alloc::{Allocator, Global};
 use core::alloc::Layout;
+use core::fmt::Debug;
 use core::marker::PhantomData;
 use core::ptr::*;
 use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
+use std::mem::ManuallyDrop;
+use std::thread::current;
 
 pub const FIRST_BUCKET_SIZE: usize = 8;
 
@@ -50,7 +53,8 @@ pub struct WriteDescriptor<'a, T: Sized> {
 
 impl<'a, T> SecVec<'a, T>
 where
-    T: Sized,
+    // TODO: remove debug bound, it is only for debugging
+    T: Sized + Debug,
 {
     // TODO: add lazy allocation
     // Maybe use NonNull::dangling()
@@ -108,6 +112,17 @@ where
                 Ordering::AcqRel,
                 Ordering::Relaxed,
             );
+            let new_writedesc = WriteDescriptor::<T>::none_new_as_ptr();
+            // # Safety
+            // The pointer is valid to dereference because it started off valid and only pointers made from
+            // from Descriptor::new_as_ptr() (which are valid because of Box) are CAS'd in
+            //
+            // The success of the CAS also doesn't matter, if the CAS failed, that means that another thread
+            // beat us to the write. Thus, in `push()`, we'll simply load in the new descriptor (this one),
+            // and proceed. Acquire/Release semantics guarantee that the next loop iteration will see this new write descriptor
+            unsafe { &*self.descriptor.load(Ordering::Acquire) }
+                .pending
+                .store(new_writedesc, Ordering::Release);
         }
     }
 
@@ -151,17 +166,24 @@ where
                 last_elem,
             );
             let next_desc = Descriptor::<T>::new_as_ptr(write_desc, current_desc.size + 1, 0);
-            if AtomicPtr::compare_exchange_weak(
+            // Debugging next_desc
+            match AtomicPtr::compare_exchange_weak(
                 &self.descriptor,
                 current_desc as *const _ as *mut _,
                 next_desc,
                 Ordering::AcqRel,
                 Ordering::Relaxed,
-            )
-            .is_ok()
-            {
-                break self
-                    .complete_write(unsafe { &*((*next_desc).pending.load(Ordering::Acquire)) });
+            ) {
+                Ok(old_ptr) => {
+                    self.complete_write(unsafe {
+                        &*((*next_desc).pending.load(Ordering::Acquire))
+                    });
+                    // TODO: remove this once we have a proper memory reclamation strategy
+                    // Manually drop prevents dealloc of `ptr` at end of scope
+                    let _wont_dealloc = ManuallyDrop::new(old_ptr);
+                    break;
+                }
+                Err(_) => continue,
             }
         }
     }
@@ -180,12 +202,23 @@ where
             let current_desc = unsafe { &*self.descriptor.load(Ordering::Acquire) };
             let pending = unsafe { &*current_desc.pending.load(Ordering::Acquire) };
             self.complete_write(pending);
+            if current_desc.size == 0 {
+                return None;
+            }
+            // #
+            // Do not need to worry about underflow for the sub because we would hav already return
             let elem = unsafe { &*self.get(current_desc.size - 1) }.load(Ordering::Acquire);
-            let next_desc = Box::into_raw(Box::new(Descriptor::<T> {
-                size: current_desc.size - 1,
-                pending: AtomicPtr::new(&mut None as *mut Option<WriteDescriptor<T>>),
-                counter: 0,
-            }));
+            // BUG LOG
+            // let next_desc = Box::into_raw(Box::new(Descriptor::<T> {
+            //     size: current_desc.size - 1,
+            //     pending: AtomicPtr::new(&mut None as *mut Option<WriteDescriptor<T>>),
+            //     counter: 0,
+            // }));
+            //
+            // There was a use-after-free caused by the &mut None being turned into a raw ptr
+            // because the ptr's mem was deallocated when the function returned and the stack frame was destroyed
+            let new_pending = WriteDescriptor::<T>::none_new_as_ptr();
+            let next_desc = Descriptor::<T>::new_as_ptr(new_pending, current_desc.size - 1, 0);
             if AtomicPtr::compare_exchange_weak(
                 &self.descriptor,
                 current_desc as *const _ as *mut _,
@@ -261,6 +294,10 @@ where
         // We know that the raw pointer is pointing to a valid writedescriptor
         // Because the vector started with a valid writedescriptor
         // and changes can only be made through compare-and-swap
+        //
+        // If there is a pending descriptor, we subtract one from the size because
+        // `push` increments the size, swaps the new descriptor in, and _then_ writes the value
+        // Therefore the size is one greater because the write hasn't happened yet
         match unsafe { &*desc.pending.load(Ordering::Acquire) } {
             Some(_) => size - 1,
             None => size,
@@ -344,12 +381,19 @@ impl<'a, T> WriteDescriptor<'a, T> {
         }
     }
 
+    pub fn none_new_as_ptr() -> *mut Option<Self> {
+        Box::into_raw(Box::new(None))
+    }
+
     pub fn some_new_as_ptr(new: usize, old: usize, location: &'a AtomicUsize) -> *mut Option<Self> {
         Box::into_raw(Box::new(Some(WriteDescriptor::new(new, old, location))))
     }
 }
 
-impl<'a, T> Default for SecVec<'a, T> {
+impl<'a, T> Default for SecVec<'a, T>
+where
+    T: Debug,
+{
     fn default() -> Self {
         Self::new()
     }
