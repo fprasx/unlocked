@@ -1,6 +1,6 @@
-use unlocked::secvec::SecVec;
 use std::sync::Arc;
 use std::thread;
+use unlocked::secvec::SecVec;
 
 fn main() {
     let sv = SecVec::<isize>::new();

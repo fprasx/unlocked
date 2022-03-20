@@ -4,6 +4,8 @@
 //
 // HAVE NOT IMPLEMENTED A MEMORY RECLAMATION SCHEME YET
 //
+// TODO: figure out semantics from drop with values in SecVec, since transmute_copy makes a copy
+// Solution: just add a T: Copy bound?
 // TODO: convince compiler we know the size of T
 // https://stackoverflow.com/questions/30330519/compile-time-generic-type-size-check
 // https://github.com/rust-lang/rfcs/blob/master/text/2000-const-generics.md
@@ -32,6 +34,9 @@ pub struct SecVec<'a, T: Sized> {
     // Using array because growing a slice/vector might require more synchronization
     // which kinda defeats the whole lock-free part
     // However, this IS a HUGE storage overhead to consider; 480 bytes
+    // TODO: are we going to have a false sharing problem?
+    // Could use a wrapper type if so
+    // See: https://github.com/Amanieu/atomic-rs/blob/master/src/fallback.rs#L21
     buffers: [AtomicPtr<AtomicUsize>; 60],
     descriptor: AtomicPtr<Descriptor<'a, T>>,
     // The data is technically stored as usizes, but it's really just transmuted T's
@@ -44,7 +49,7 @@ struct Descriptor<'a, T: Sized> {
     size: usize,
     // For reference counting?
     // TODO: figure out memory reclamation scheme, would be AtomicUsize in that case
-    counter: usize,
+    _counter: usize,
 }
 
 #[derive(Debug)]
@@ -61,7 +66,7 @@ struct WriteDescriptor<'a, T: Sized> {
 
 impl<'a, T> SecVec<'a, T>
 where
-    T: Sized,
+    T: Sized + Copy,
 {
     // TODO: add lazy allocation
     // Maybe use NonNull::dangling()
@@ -356,11 +361,11 @@ where
 }
 
 impl<'a, T> Descriptor<'a, T> {
-    pub fn new(pending: *mut Option<WriteDescriptor<'a, T>>, size: usize, counter: usize) -> Self {
+    pub fn new(pending: *mut Option<WriteDescriptor<'a, T>>, size: usize, _counter: usize) -> Self {
         Descriptor {
             pending: AtomicPtr::new(pending),
             size,
-            counter,
+            _counter,
         }
     }
 
@@ -392,7 +397,10 @@ impl<'a, T> WriteDescriptor<'a, T> {
     }
 }
 
-impl<'a, T> Default for SecVec<'a, T> {
+impl<'a, T> Default for SecVec<'a, T>
+where
+    T: Copy,
+{
     fn default() -> Self {
         Self::new()
     }
@@ -422,6 +430,14 @@ mod tests {
         }
         for i in (0..10).rev() {
             assert_eq!(sv.pop(), Some(i));
+        }
+    }
+
+    #[test]
+    fn does_not_allocate_buffers_on_new() {
+        let sv = SecVec::<isize>::new();
+        for buffer in sv.buffers {
+            assert!(buffer.load(Ordering::Relaxed).is_null())
         }
     }
 }
