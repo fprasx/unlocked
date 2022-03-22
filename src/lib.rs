@@ -3,7 +3,7 @@
 #[allow(unused_imports)]
 #[deny(unused_unsafe)]
 #[macro_use]
-pub mod secvec;
+pub mod leaky;
 
 #[macro_export]
 macro_rules! vector_impl {

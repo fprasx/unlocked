@@ -1,9 +1,3 @@
-// CURRENTLY LEAKS MEMORY
-//
-// THAT IS OK
-//
-// HAVE NOT IMPLEMENTED A MEMORY RECLAMATION SCHEME YET
-//
 // TODO: figure out semantics from drop with values in SecVec, since transmute_copy makes a copy
 // Solution: just add a T: Copy bound?
 // TODO: convince compiler we know the size of T
@@ -33,6 +27,7 @@ pub const ATOMIC_NULLPTR: AtomicPtr<AtomicUsize> = AtomicPtr::new(ptr::null_mut:
 /// Things to talk about in documentation:
 /// Structure
 /// T: Copy bound because of internal usage of transmute_copy
+/// Why no lazy allocation
 #[derive(Debug)]
 pub struct SecVec<'a, T: Sized> {
     // TODO: are we going to have a false sharing problem?
@@ -44,6 +39,7 @@ pub struct SecVec<'a, T: Sized> {
     _marker: PhantomData<T>,
 }
 
+/// TODO: add docs
 #[derive(Debug)]
 struct Descriptor<'a, T: Sized> {
     pending: AtomicPtr<Option<WriteDescriptor<'a, T>>>,
@@ -53,24 +49,21 @@ struct Descriptor<'a, T: Sized> {
     _counter: usize,
 }
 
+/// TODO: add docs
+/// Both new and old are just  T's transmuted into usize, thus the PhantomData
 #[derive(Debug)]
 struct WriteDescriptor<'a, T: Sized> {
     new: usize,
     old: usize,
     location: &'a AtomicUsize,
-    // Both new and old are just  T's transmuted into usize
     _marker: PhantomData<T>,
-    // TODO: do we need another PhantomData for the atomicusize?
-    // `location` is a reference to the AtomicUsize that will hold `new`
-    // _ref_marker: PhantomData<&'a T>
 }
 
 impl<'a, T> SecVec<'a, T>
 where
     T: Sized + Copy,
 {
-    // TODO: add lazy allocation
-    // Maybe use NonNull::dangling()
+    /// Return of new instance of a SecVec, with capacity 0 and size 0;
     pub fn new() -> Self {
         let pending = WriteDescriptor::<T>::new_none_as_ptr();
         let descriptor = Descriptor::<T>::new_as_ptr(pending, 0, 0);
@@ -124,12 +117,10 @@ where
         }
     }
 
+    /// 1. Check if there is a writeop (write-descriptor) pending
+    /// 2. If so, CAS the location in the buffer with the new value
+    /// 3. Set the writeop state to false
     fn complete_write(&self, pending: &Option<WriteDescriptor<T>>) {
-        /*
-        1. Check if there is a writeop (write-descriptor) pending
-        2. If so, CAS the location in the buffer with the new value
-        3. Set the writeop state to false
-        */
         #[allow(unused_must_use)]
         if let Some(writedesc) = pending {
             AtomicUsize::compare_exchange(
@@ -155,14 +146,14 @@ where
 
     pub fn push(&self, elem: T) {
         /*
-        1. Pull down the current descriptor
-        2. Call complete_write on it to clear out a pending writeop
-        3. Allocate memory if need be
-        4. Create a new write-descriptor
-        5. Try to CAS in the new write-descriptor
-        6. Go back to step 1 if CAS failed
-        7. Call complete_write to finish the write
-         */
+        * 1. Pull down the current descriptor
+        * 2. Call complete_write on it to clear out a pending writeop
+        * 3. Allocate memory if need be
+        * 4. Create a new write-descriptor
+        * 5. Try to CAS in the new write-descriptor
+        * 6. Go back to step 1 if CAS failed
+        * 7. Call complete_write to finish the write
+        */
 
         loop {
             // # SAFETY
@@ -276,7 +267,34 @@ where
     //
     // TODO: It could still faster though, should benchmark it out
 
-    /// Reserve enough space for the provided number of elements
+    /// Reserve enough space for the provided number of elements.
+    /// 
+    /// You should always call this if you know how many elements you will need in advance
+    /// because allocation requires a CAS and it's better to do it while there's less 
+    /// contention.
+    /// 
+    /// ```rust
+    /// # use unlocked::leaky::SecVec;
+    /// # use std::sync::Arc;
+    /// # use std::thread;
+    /// let sv = Arc::new(SecVec::<isize>::new());
+    /// // Better to CAS there than in a thread
+    /// sv.reserve(10);
+    /// let sv1 = Arc::clone(&sv);
+    /// let t1 = thread::spawn(move || {
+    ///     for _ in 0..5 {
+    ///         sv.push(5);
+    ///     }
+    /// });
+    /// let t2 = thread::spawn(move || {
+    ///     for _ in 0..5 {
+    ///         sv1.push(5);
+    ///     }
+    /// });
+    /// // We know that no allocations happened during the multi-threaded part
+    /// t1.join().unwrap();
+    /// t2.join().unwrap();
+    /// ```
     pub fn reserve(&self, size: usize) {
         // Method
         // Calculate the number of buckets needed and their indices,
@@ -304,23 +322,26 @@ where
         }
     }
 
+    /// Return the size of the vector, taking into account a pending write operation
+    /// ```rust
+    /// # use unlocked::leaky::SecVec;
+    /// let sv = SecVec::<isize>::new();
+    /// sv.push(-1);
+    /// sv.push(-2);
+    /// sv.pop();
+    /// assert_eq!(sv.size(), 1);
+    /// ```
     pub fn size(&self) -> usize {
-        /*
-        1. Pull down the current descriptor
-        2. Read the size from the descriptor
-        3. If there is a pending writeop, subtract one from the size
-        4. Return the size
-        */
-        // SAFETY
+        // # Safety
         // We know that the raw pointer is pointing to a valid descriptor
         // Because the vector started with a valid instance and the only
-        // changes to vector.descriptor are through compare-and-swap
+        // changes to vector.descriptor are through CAS'ing with another valid descriptor
         let desc = unsafe { &*self.descriptor.load(Ordering::Acquire) };
         let size = desc.size;
-        // SAFETY
+        // # Safety
         // We know that the raw pointer is pointing to a valid writedescriptor
         // Because the vector started with a valid writedescriptor
-        // and changes can only be made through compare-and-swap
+        // and changes can only be made through CAS'ing with another valid writedescriptor 
         //
         // If there is a pending descriptor, we subtract one from the size because
         // `push` increments the size, swaps the new descriptor in, and _then_ writes the value
@@ -352,7 +373,7 @@ where
         // (AcqRel, Relaxed) => intrinsics::atomic_cxchg_acqrel_failrelaxed(dst, old, new),
         //                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ using uninitialized data, but this operation requires initialized memory
         // This shouldn't be an actual issue since the old value is never use, so might switch back to allocate (regular)
-        // Maybe use MaybeInit?
+        // TODO: Maybe use MaybeInit?
         let ptr = allocator
             .allocate_zeroed(layout)
             .expect("Out of memory")
@@ -460,4 +481,10 @@ mod tests {
             assert!(buffer.load(Ordering::Relaxed).is_null())
         }
     }
+
+    #[test]
+    fn reserve_usize_max() {
+        () 
+    }
+
 }

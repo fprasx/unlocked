@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
-use unlocked::secvec::SecVec;
+use unlocked::leaky::SecVec;
 fn main() {
     let sv = Arc::new(SecVec::<isize>::new());
     #[allow(clippy::needless_collect)]
