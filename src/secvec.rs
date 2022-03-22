@@ -28,16 +28,23 @@ pub const FIRST_BUCKET_SIZE: usize = 8;
 pub const ATOMIC_NULLPTR: AtomicPtr<AtomicUsize> = AtomicPtr::new(ptr::null_mut::<AtomicUsize>());
 
 // TODO: make generic parameter N: the number of buckets
+/// Things to talk about in documentation:
+/// Structure
+/// T: Copy bound because of internal usage of transmute_copy
 #[derive(Debug)]
 pub struct SecVec<'a, T: Sized> {
     // Enough space to hold usize::MAX elements
-    // Using array because growing a slice/vector might require more synchronization
+    // TODO: change to only hold enough for isize::MAX in one buffer
+    // because of the pointer::add(i) in self.get(), as i cannot exceed isize::MAX
+    // Using array because growing a slice/vector requires more synchronization
     // which kinda defeats the whole lock-free part
     // However, this IS a HUGE storage overhead to consider; 480 bytes
     // TODO: are we going to have a false sharing problem?
     // Could use a wrapper type if so
     // See: https://github.com/Amanieu/atomic-rs/blob/master/src/fallback.rs#L21
-    buffers: [AtomicPtr<AtomicUsize>; 60],
+    // TODO: to box or not to box?
+    // If no box, we avoid a heap allocation, if box, the type shrinks a LOT
+    buffers: Box<[AtomicPtr<AtomicUsize>; 60]>,
     descriptor: AtomicPtr<Descriptor<'a, T>>,
     // The data is technically stored as usizes, but it's really just transmuted T's
     _marker: PhantomData<T>,
@@ -73,7 +80,7 @@ where
     pub fn new() -> Self {
         let pending = WriteDescriptor::<T>::new_none_as_ptr();
         let descriptor = Descriptor::<T>::new_as_ptr(pending, 0, 0);
-        let buffers = [ATOMIC_NULLPTR; 60];
+        let buffers = Box::new([ATOMIC_NULLPTR; 60]);
         Self {
             descriptor: AtomicPtr::new(descriptor),
             buffers,
@@ -81,22 +88,31 @@ where
         }
     }
 
-    // Return a *const T to the index specified
+    /// Return a *const T to the index specified
     fn get(&self, i: usize) -> *const AtomicUsize {
+        // Technically this could overflow!
+        // HOWEVER, it is extremely unlikely that `self` would be holding anywhere close usize::MAX elements
+        // As that is 18 exabytes of memory
         let pos = i + FIRST_BUCKET_SIZE;
-        // The highest bit set in pos
         let hibit = highest_bit(pos);
-        let index = pos ^ 2usize.pow(hibit);
+        // The shift-left is 2 to the power of hibit
+        let index = pos ^ (2 << hibit);
         // Select the correct buffer to index into
+        // # Safety
+        // Since hibit = highest_bit(pos), and pos >= FIRST_BUCKET_SIZE
+        // The subtraction hibit - highest_bit(FIRST_BUCKET_SIZE) cannot underflow
         let buffer = &self.buffers[(hibit - highest_bit(FIRST_BUCKET_SIZE)) as usize];
+        // Offset the pointer to return a pointer to the correct element
         unsafe {
-            // Offset the pointer to return a pointer to the correct element
-            // SAFETY
+            // # Safety
             // We know that we can offset the pointer because we will have allocated a bucket
-            // to store the value
+            // to store the value, since we only call values that are `self.descriptor.size` or smaller
             // And this function is not part of the public API
-            // TODO: ensure that the index does not overflow, probaly can't, looking at calcualtions in function,
-            // but just check to make sure
+            // 
+            // Conditions from the std docs:
+            // Technically, index could be overflow isize::MAX!
+            // However, this would entail the vector taking up 9 exabytes of memory for element storage
+            // TODO: check if this is a plausible case and if we need to check for overflow
             buffer.load(Ordering::Acquire).add(index)
         }
     }
@@ -436,7 +452,7 @@ mod tests {
     #[test]
     fn does_not_allocate_buffers_on_new() {
         let sv = SecVec::<isize>::new();
-        for buffer in sv.buffers {
+        for buffer in *sv.buffers {
             assert!(buffer.load(Ordering::Relaxed).is_null())
         }
     }
