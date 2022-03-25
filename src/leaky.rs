@@ -28,6 +28,44 @@ pub const ATOMIC_NULLPTR: AtomicPtr<AtomicUsize> = AtomicPtr::new(ptr::null_mut:
 /// Structure
 /// T: Copy bound because of internal usage of transmute_copy
 /// Why no lazy allocation
+///
+/// A lock-free vector over `T: Copy` types that can be safely modified accross thread boundaries.
+///
+/// The vector is an implementation of the algorithm described in the paper _Lock-free Dynamically
+/// Resizable Arrays_ by **Dechev et. al.**, 2006.
+/// 
+/// # Uses
+/// 
+/// A concurrent stack that isn't a linked list. Mic Drop
+///
+/// # Considerations
+///
+/// This vector also uses dynamic allocation heavily. Internal data is allocated on the heap
+/// because memory needs to be reclaimed in a sound way. Calling `new()` requires 3 heap allocations.
+/// The first is just to allocate enough space for the vector's internal data. It is never called
+/// again. The other two allocations set the state of the vector, and similar allocations are made
+/// when pushing and popping.
+///
+/// The vector does not allocate lazily.
+/// Checking whether the vector has already allocated is very expensive (even in a single-threaded
+/// environment, at least one atomic read and compare_exchange), and would incur overhead on all
+/// subsequent operations.
+///
+/// The size of the type is two pointers (16 bytes on 64-bit platforms), but the vector allocates 480
+/// bytes of heap memory upfront. Bear this in mind if you are in a memory constrained environment.
+///
+/// This vector does not support types larger than usize because it uses atomic instructions internally.
+/// Larger types must be accessed through references/pointers.
+///
+/// # Internal structure
+///
+/// Internally, the vector stores elements in buckets, which grow the same way allocations
+/// in a normal vector do. Thus, the first bucket might have size 8, the next size 16, then 32, etc.
+///
+/// The vector relies heavily on the `compare_exchange` instruction to achieve synchronization.
+///
+/// Memory reclamation is achieved through the use of hazard pointers.
+///
 #[derive(Debug)]
 pub struct SecVec<'a, T: Sized> {
     // TODO: are we going to have a false sharing problem?
@@ -83,10 +121,10 @@ where
     /// there must already be a bucket allocated which would hold that index
     /// **and** the index must already have been initialized with push/set
     unsafe fn get(&self, i: usize) -> *const AtomicUsize {
-        // Technically this could overflow!
-        // HOWEVER, it is extremely unlikely that `self` would be holding anywhere close usize::MAX elements
-        // As that is 18 exabytes of memory
-        let pos = i.checked_add(FIRST_BUCKET_SIZE).expect("index too large, integer overlow");
+        // Check for overflow
+        let pos = i
+            .checked_add(FIRST_BUCKET_SIZE)
+            .expect("index too large, integer overflow");
         let hibit = highest_bit(pos);
         // The shift-left is 2 to the power of hibit
         let index = pos ^ (1 << hibit);
@@ -102,7 +140,7 @@ where
             // to store the value. Since we only call values that are `self.descriptor.size` or smaller,
             // We know the offset will not go out of bounds.
             // Also this function is not part of the public API
-            // 
+            //
             // On overflowing:
             // The max number of elements the vector can hold is usize::MAX,
             // and the last bucket holds exactly half that many, 2 ** 63, and isize::MAX is 2 **63 - 1.
@@ -146,14 +184,14 @@ where
 
     pub fn push(&self, elem: T) {
         /*
-        * 1. Pull down the current descriptor
-        * 2. Call complete_write on it to clear out a pending writeop
-        * 3. Allocate memory if need be
-        * 4. Create a new write-descriptor
-        * 5. Try to CAS in the new write-descriptor
-        * 6. Go back to step 1 if CAS failed
-        * 7. Call complete_write to finish the write
-        */
+         * 1. Pull down the current descriptor
+         * 2. Call complete_write on it to clear out a pending writeop
+         * 3. Allocate memory if need be
+         * 4. Create a new write-descriptor
+         * 5. Try to CAS in the new write-descriptor
+         * 6. Go back to step 1 if CAS failed
+         * 7. Call complete_write to finish the write
+         */
 
         loop {
             // # SAFETY
@@ -267,12 +305,14 @@ where
     //
     // TODO: It could still faster though, should benchmark it out
 
+    /// TODO: add panic documentation
+    /// TODO: figure out overflow docs
     /// Reserve enough space for the provided number of elements.
-    /// 
+    ///
     /// You should always call this if you know how many elements you will need in advance
-    /// because allocation requires a CAS and it's better to do it while there's less 
+    /// because allocation requires a CAS and it's better to do it while there's less
     /// contention.
-    /// 
+    ///
     /// ```rust
     /// # use unlocked::leaky::SecVec;
     /// # use std::sync::Arc;
@@ -341,7 +381,7 @@ where
         // # Safety
         // We know that the raw pointer is pointing to a valid writedescriptor
         // Because the vector started with a valid writedescriptor
-        // and changes can only be made through CAS'ing with another valid writedescriptor 
+        // and changes can only be made through CAS'ing with another valid writedescriptor
         //
         // If there is a pending descriptor, we subtract one from the size because
         // `push` increments the size, swaps the new descriptor in, and _then_ writes the value
@@ -484,7 +524,7 @@ mod tests {
 
     #[test]
     fn reserve_usize_max() {
-        () 
+        let sv = SecVec::<isize>::new();
+        sv.reserve(usize::MAX)
     }
-
 }
