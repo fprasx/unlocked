@@ -1,21 +1,21 @@
-// TODO: figure out semantics from drop with values in SecVec, since transmute_copy makes a copy
-// Solution: just add a T: Copy bound?
+// TODO: add ZST check here/ or in macro
 // TODO: convince compiler we know the size of T
 // https://stackoverflow.com/questions/30330519/compile-time-generic-type-size-check
 // https://github.com/rust-lang/rfcs/blob/master/text/2000-const-generics.md
 // https://github.com/rust-lang/rust/issues/43408
 extern crate alloc;
+use crate::alloc_error::{alloc_guard, capacity_overflow};
 use crate::highest_bit;
-use crate::alloc_error::handle_try_reserve_error;
-use alloc::alloc::{Allocator, Global, Layout};
+use alloc::alloc::{handle_alloc_error, Allocator, Global, Layout};
 use alloc::boxed::Box;
-//use core::alloc::Layout;
 use core::fmt::Debug;
 use core::marker::PhantomData;
 use core::mem::{self, ManuallyDrop};
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
+use crossbeam_utils::{Backoff, CachePadded};
 
+// TODO: use FisrtBucketSize trait (as long as it works with the macro)
 /// The number of elements in the first allocation.
 /// Must always be a power of 2.
 pub const FIRST_BUCKET_SIZE: usize = 8;
@@ -38,6 +38,10 @@ pub const ATOMIC_NULLPTR: AtomicPtr<AtomicU64> = AtomicPtr::new(ptr::null_mut::<
 /// # Uses
 ///
 /// A concurrent stack that isn't a linked list. Mic Drop
+///
+/// Note: this vector cannot tbe used with ZST's. There is probably a much better way to do what you want.
+/// If you just want to push/pop, you can use an atomic variable to track how many are left on the stack
+/// and then just increment and decrement it.
 ///
 /// # Considerations
 ///
@@ -72,14 +76,13 @@ pub struct SecVec<'a, T: Sized> {
     // TODO: are we going to have a false sharing problem?
     // Could use a wrapper type if so
     // See: https://github.com/Amanieu/atomic-rs/blob/master/src/fallback.rs#L21
-    buffers: Box<[AtomicPtr<AtomicU64>; 60]>,
-    descriptor: AtomicPtr<Descriptor<'a, T>>,
+    buffers: CachePadded<Box<[AtomicPtr<AtomicU64>; 60]>>,
+    descriptor: CachePadded<AtomicPtr<Descriptor<'a, T>>>,
     // The data is technically stored as usizes, but it's really just transmuted T's
     _marker: PhantomData<T>,
 }
 
 /// TODO: add docs
-#[derive(Debug)]
 struct Descriptor<'a, T: Sized> {
     pending: AtomicPtr<Option<WriteDescriptor<'a, T>>>,
     size: usize,
@@ -90,7 +93,6 @@ struct Descriptor<'a, T: Sized> {
 
 /// TODO: add docs
 /// Both new and old are just  T's transmuted into usize, thus the PhantomData
-#[derive(Debug)]
 struct WriteDescriptor<'a, T: Sized> {
     new: u64,
     old: u64,
@@ -108,13 +110,12 @@ where
         let descriptor = Descriptor::<T>::new_as_ptr(pending, 0, 0);
         let buffers = Box::new([ATOMIC_NULLPTR; 60]);
         Self {
-            descriptor: AtomicPtr::new(descriptor),
-            buffers,
+            descriptor: CachePadded::new(AtomicPtr::new(descriptor)),
+            buffers: CachePadded::new(buffers),
             _marker: PhantomData,
         }
     }
 
-    #[deny(unsafe_op_in_unsafe_fn)]
     /// Return a *const T to the index specified
     ///
     /// # Safety
@@ -127,32 +128,27 @@ where
             .checked_add(FIRST_BUCKET_SIZE)
             .expect("index too large, integer overflow");
         let hibit = highest_bit(pos);
-        // The shift-left is 2 to the power of hibit
-        let index = pos ^ (1 << hibit);
+        let offset = pos ^ (1 << hibit);
         // Select the correct buffer to index into
         // # Safety
         // Since hibit = highest_bit(pos), and pos >= FIRST_BUCKET_SIZE
         // The subtraction hibit - highest_bit(FIRST_BUCKET_SIZE) cannot underflow
         let buffer = &self.buffers[(hibit - highest_bit(FIRST_BUCKET_SIZE)) as usize];
+        // Check that the offset doesn't exceed isize::MAX
+        assert!(
+            offset
+                .checked_mul(mem::size_of::<T>())
+                .map(|val| val < isize::MAX as usize)
+                .is_some(),
+            "pointer offset exceed isize::MAX bytes"
+        );
         // Offset the pointer to return a pointer to the correct element
         unsafe {
             // # Safety
             // We know that we can offset the pointer because we will have allocated a bucket
             // to store the value. Since we only call values that are `self.descriptor.size` or smaller,
-            // We know the offset will not go out of bounds.
-            // Also this function is not part of the public API
-            //
-            // On overflowing:
-            // The max number of elements the vector can hold is usize::MAX,
-            // and the last bucket holds exactly half that many, 2 ** 63, and isize::MAX is 2 **63 - 1.
-            // From the first statement in this function, we know that i < usize::MAX
-            // Therefore index cannot overflow an isize because the largest bucket holds isize::MAX + 1
-            // and i < usize::MAX, so the last FIRST_BUCKET_SIZE elements of the last bucket will
-            // not be touched
-            //
-            // UNLESS: FIRST_BUCKET_SIZE is 0 for zst's, but that's a whole different thing
-            // and the vector currently doesn't support zst's
-            buffer.load(Ordering::Acquire).add(index)
+            // We know the offset will not go out of bounds because of the assert.
+            buffer.load(Ordering::Acquire).add(offset)
         }
     }
 
@@ -193,7 +189,7 @@ where
          * 6. Go back to step 1 if CAS failed
          * 7. Call complete_write to finish the write
          */
-
+        let backoff = Backoff::new(); // Backoff causes significant speedup
         loop {
             // # SAFETY
             // It is safe to dereference the raw pointer because the first descriptor was valid
@@ -223,25 +219,21 @@ where
                 last_elem,
             );
             let next_desc = Descriptor::<T>::new_as_ptr(write_desc, current_desc.size + 1, 0);
-            // Debugging next_desc
-            match AtomicPtr::compare_exchange_weak(
+            // Handle result of compare_exchange
+            if let Ok(old_ptr) = AtomicPtr::compare_exchange_weak(
                 &self.descriptor,
                 current_desc as *const _ as *mut _,
                 next_desc,
                 Ordering::AcqRel,
                 Ordering::Relaxed,
             ) {
-                Ok(old_ptr) => {
-                    self.complete_write(unsafe {
-                        &*((*next_desc).pending.load(Ordering::Acquire))
-                    });
-                    // TODO: remove this once we have a proper memory reclamation strategy
-                    // Manually drop prevents dealloc of `ptr` at end of scope
-                    let _wont_dealloc = ManuallyDrop::new(old_ptr);
-                    break;
-                }
-                Err(_) => continue,
+                self.complete_write(unsafe { &*((*next_desc).pending.load(Ordering::Acquire)) });
+                // TODO: remove this once we have a proper memory reclamation strategy
+                // Manually drop prevents dealloc of `ptr` at end of scope
+                let _wont_dealloc = ManuallyDrop::new(old_ptr);
+                break;
             }
+            backoff.spin();
         }
     }
 
@@ -255,6 +247,7 @@ where
         6. Go back to step 1 if CAS failed
         7. Return the element that was read in from the end of the array
         */
+        let backoff = Backoff::new(); // Backoff causes significant speedup
         loop {
             let current_desc = unsafe { &*self.descriptor.load(Ordering::Acquire) };
             let pending = unsafe { &*current_desc.pending.load(Ordering::Acquire) };
@@ -291,10 +284,13 @@ where
                 // from a valid T, therefore we are only transmuting it back
                 return Some(unsafe { mem::transmute_copy::<u64, T>(&elem) });
             }
+            backoff.spin();
         }
     }
 
-    // *** MEMORY ***
+    // ============================================================
+    // ========================== MEMORY ==========================
+    // ============================================================
     // Sadly, the vector does not currently allocate lazily
     // meaning the overhead from storing an array of buckets
     // is always there
@@ -313,6 +309,9 @@ where
     /// You should always call this if you know how many elements you will need in advance
     /// because allocation requires a CAS and it's better to do it while there's less
     /// contention.
+    ///
+    /// Note: if you call reserve with a value larger than the capacity of the vector,
+    /// the vector will allocate as much as it can.
     ///
     /// ```rust
     /// # use unlocked::leaky::SecVec;
@@ -351,11 +350,12 @@ where
             self.allocate_bucket(0);
         }
         // Number of allocations needed for current size
-        let mut num_current_allocs = highest_bit(current_size + FIRST_BUCKET_SIZE - 1)
-            .saturating_sub(highest_bit(FIRST_BUCKET_SIZE));
+        let mut num_current_allocs =
+            highest_bit(current_size.saturating_add(FIRST_BUCKET_SIZE) - 1)
+                .saturating_sub(highest_bit(FIRST_BUCKET_SIZE));
         // Compare with the number of allocations needed for size `new`
         while num_current_allocs
-            < highest_bit(size + FIRST_BUCKET_SIZE - 1)
+            < highest_bit(size.saturating_add(FIRST_BUCKET_SIZE) - 1)
                 .saturating_sub(highest_bit(FIRST_BUCKET_SIZE))
         {
             num_current_allocs += 1;
@@ -406,19 +406,28 @@ where
     fn allocate_bucket(&self, bucket: usize) {
         // The shift-left is equivalent to raising 2 to the power of bucket
         let size = FIRST_BUCKET_SIZE * (1 << bucket);
-        let layout = Layout::array::<AtomicU64>(size).expect("Size overflowed");
+        let layout = match Layout::array::<AtomicU64>(size) {
+            Ok(layout) => layout,
+            Err(_) => capacity_overflow(),
+        };
+        // Make sure allocation is ok
+        match alloc_guard(layout.size()) {
+            Ok(_) => {}
+            Err(_) => capacity_overflow(),
+        }
         let allocator = Global;
-        // The reason for using allocate_zeroed is the miri complains about accessing uninitialized memory otherwise
+        // The reason for using allocate_zeroed is that miri complains about accessing uninitialized memory otherwise
         //
         // The situation is when we allocate the memory, and then try to CAS a new value in:
         // (AcqRel, Relaxed) => intrinsics::atomic_cxchg_acqrel_failrelaxed(dst, old, new),
         //                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ using uninitialized data, but this operation requires initialized memory
         // This shouldn't be an actual issue since the old value is never use, so might switch back to allocate (regular)
-        // TODO: Maybe use MaybeInit?
-        let ptr = allocator
-            .allocate_zeroed(layout)
-            .expect("Out of memory")
-            .as_ptr() as *mut AtomicU64;
+        // TODO: Maybe use MaybeUninit?
+        let allocation = allocator.allocate_zeroed(layout);
+        let ptr = match allocation {
+            Ok(ptr) => ptr.as_ptr() as *mut AtomicU64,
+            Err(_) => handle_alloc_error(layout),
+        };
         // If the CAS fails, then the bucket has already been initalized with memory
         // and we free the memory we just allocated
         if self.buffers[bucket]
@@ -518,14 +527,109 @@ mod tests {
     #[test]
     fn does_not_allocate_buffers_on_new() {
         let sv = SecVec::<isize>::new();
-        for buffer in *sv.buffers {
+        for buffer in &**sv.buffers {
             assert!(buffer.load(Ordering::Relaxed).is_null())
         }
     }
 
+    #[cfg(not(miri))] // Too slow
     #[test]
+    #[should_panic] // The allocation is too large
     fn reserve_usize_max() {
         let sv = SecVec::<isize>::new();
         sv.reserve(usize::MAX)
     }
+}
+#[cfg(not(miri))] // Too slow
+#[cfg(test)]
+mod bench {
+    extern crate std;
+    extern crate test;
+    use super::*;
+    use crossbeam_queue::SegQueue;
+    use std::sync::Arc;
+    use std::sync::Mutex;
+    use std::thread::{self, JoinHandle};
+    use std::vec::Vec;
+    use test::Bencher;
+
+    macro_rules! queue {
+        ($($funcname:ident: $threads:expr),*) => {
+            $(
+                #[bench]
+                fn $funcname(b: &mut Bencher) {
+                    let sv = Arc::new(SegQueue::<isize>::new());
+                    b.iter(|| {
+                        #[allow(clippy::needless_collect)]
+                        let handles = (0..$threads)
+                            .map(|_| {
+                                let data = Arc::clone(&sv);
+                                thread::spawn(move || {
+                                    for i in 0..1000 {
+                                        data.push(i);
+                                    }
+                                })
+                            })
+                            .collect::<Vec<JoinHandle<()>>>();
+                        handles.into_iter().for_each(|h| h.join().unwrap());
+                    });
+                }
+                        )*
+        };
+    }
+
+    macro_rules! unlocked {
+        ($($funcname:ident: $threads:expr),*) => {
+            $(
+                #[bench]
+                fn $funcname(b: &mut Bencher) {
+                    let sv = Arc::new(SecVec::<isize>::new());
+                    sv.reserve(1000 * $threads);
+                    b.iter(|| {
+                        #[allow(clippy::needless_collect)]
+                        let handles = (0..$threads)
+                            .map(|_| {
+                                let data = Arc::clone(&sv);
+                                thread::spawn(move || {
+                                    for i in 0..1000 {
+                                        data.push(i);
+                                    }
+                                })
+                            })
+                            .collect::<Vec<JoinHandle<()>>>();
+                        handles.into_iter().for_each(|h| h.join().unwrap());
+                    });
+                }
+                        )*
+        };
+    }
+
+    macro_rules! mutex {
+        ($($funcname:ident: $threads:expr),*) => {
+            $(
+                #[bench]
+                fn $funcname(b: &mut Bencher) {
+                    let sv = Arc::new(Mutex::new(Vec::<isize>::with_capacity(1000 * $threads)));
+                    b.iter(|| {
+                        #[allow(clippy::needless_collect)]
+                        let handles = (0..$threads)
+                            .map(|_| {
+                                let data = Arc::clone(&sv);
+                                thread::spawn(move || {
+                                    for i in 0..1000 {
+                                        let mut g = data.lock().unwrap();
+                                        g.push(i);
+                                    }
+                                })
+                            })
+                            .collect::<Vec<JoinHandle<()>>>();
+                        handles.into_iter().for_each(|h| h.join().unwrap());
+                    });
+                }
+                        )*
+        };
+    }
+    unlocked!(unlocked1: 1, unlocked2: 2, unlocked3: 3, unlocked4: 4, unlocked5: 5, unlocked6: 6);
+    mutex!(mutex1: 1, mutex2: 2, mutex3: 3, mutex4: 4, mutex5: 5, mutex6: 6, mutex: 20);
+    queue!(q1: 1, q2: 2, q3: 3, q4: 4, q5: 5);
 }
