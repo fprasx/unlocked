@@ -6,22 +6,23 @@
 // https://github.com/rust-lang/rust/issues/43408
 extern crate alloc;
 use crate::highest_bit;
-use alloc::alloc::{Allocator, Global};
+use crate::alloc_error::handle_try_reserve_error;
+use alloc::alloc::{Allocator, Global, Layout};
 use alloc::boxed::Box;
-use core::alloc::Layout;
+//use core::alloc::Layout;
 use core::fmt::Debug;
 use core::marker::PhantomData;
 use core::mem::{self, ManuallyDrop};
-use core::ptr::{self, null_mut};
-use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
+use core::ptr::{self, NonNull};
+use core::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
 
 /// The number of elements in the first allocation.
 /// Must always be a power of 2.
 pub const FIRST_BUCKET_SIZE: usize = 8;
 
-/// An AtomicPtr containing a null-pointer to an AtomicUsize
+/// An AtomicPtr containing a null-pointer to an AtomicU64
 #[allow(clippy::declare_interior_mutable_const)] // We actually do want this to be copied
-pub const ATOMIC_NULLPTR: AtomicPtr<AtomicUsize> = AtomicPtr::new(ptr::null_mut::<AtomicUsize>());
+pub const ATOMIC_NULLPTR: AtomicPtr<AtomicU64> = AtomicPtr::new(ptr::null_mut::<AtomicU64>());
 
 // TODO: make generic parameter N: the number of buckets
 /// Things to talk about in documentation:
@@ -33,9 +34,9 @@ pub const ATOMIC_NULLPTR: AtomicPtr<AtomicUsize> = AtomicPtr::new(ptr::null_mut:
 ///
 /// The vector is an implementation of the algorithm described in the paper _Lock-free Dynamically
 /// Resizable Arrays_ by **Dechev et. al.**, 2006.
-/// 
+///
 /// # Uses
-/// 
+///
 /// A concurrent stack that isn't a linked list. Mic Drop
 ///
 /// # Considerations
@@ -71,7 +72,7 @@ pub struct SecVec<'a, T: Sized> {
     // TODO: are we going to have a false sharing problem?
     // Could use a wrapper type if so
     // See: https://github.com/Amanieu/atomic-rs/blob/master/src/fallback.rs#L21
-    buffers: Box<[AtomicPtr<AtomicUsize>; 60]>,
+    buffers: Box<[AtomicPtr<AtomicU64>; 60]>,
     descriptor: AtomicPtr<Descriptor<'a, T>>,
     // The data is technically stored as usizes, but it's really just transmuted T's
     _marker: PhantomData<T>,
@@ -83,7 +84,7 @@ struct Descriptor<'a, T: Sized> {
     pending: AtomicPtr<Option<WriteDescriptor<'a, T>>>,
     size: usize,
     // For reference counting?
-    // TODO: figure out memory reclamation scheme, would be AtomicUsize in that case
+    // TODO: figure out memory reclamation scheme, would be AtomicU64 in that case
     _counter: usize,
 }
 
@@ -91,9 +92,9 @@ struct Descriptor<'a, T: Sized> {
 /// Both new and old are just  T's transmuted into usize, thus the PhantomData
 #[derive(Debug)]
 struct WriteDescriptor<'a, T: Sized> {
-    new: usize,
-    old: usize,
-    location: &'a AtomicUsize,
+    new: u64,
+    old: u64,
+    location: &'a AtomicU64,
     _marker: PhantomData<T>,
 }
 
@@ -120,7 +121,7 @@ where
     /// The index this is called on **must** be a valid index, meaning:
     /// there must already be a bucket allocated which would hold that index
     /// **and** the index must already have been initialized with push/set
-    unsafe fn get(&self, i: usize) -> *const AtomicUsize {
+    unsafe fn get(&self, i: usize) -> *const AtomicU64 {
         // Check for overflow
         let pos = i
             .checked_add(FIRST_BUCKET_SIZE)
@@ -161,7 +162,7 @@ where
     fn complete_write(&self, pending: &Option<WriteDescriptor<T>>) {
         #[allow(unused_must_use)]
         if let Some(writedesc) = pending {
-            AtomicUsize::compare_exchange(
+            AtomicU64::compare_exchange(
                 writedesc.location,
                 writedesc.old,
                 writedesc.new,
@@ -217,8 +218,8 @@ where
             let last_elem = unsafe { &*self.get(current_desc.size) };
             let write_desc = WriteDescriptor::<T>::new_some_as_ptr(
                 // TODO: address this in macro
-                unsafe { mem::transmute_copy::<T, usize>(&elem) }, // SAFE because we know T has correct size
-                last_elem.load(Ordering::Acquire), // Load from the AtomicUsize, which really containes the bytes for T
+                unsafe { mem::transmute_copy::<T, u64>(&elem) }, // SAFE because we know T has correct size
+                last_elem.load(Ordering::Acquire), // Load from the AtomicU64, which really containes the bytes for T
                 last_elem,
             );
             let next_desc = Descriptor::<T>::new_as_ptr(write_desc, current_desc.size + 1, 0);
@@ -288,7 +289,7 @@ where
                 // This is ok because only 64-bit values can be stored in the vector
                 // We also know that elem is a valid T because it was transmuted into a usize
                 // from a valid T, therefore we are only transmuting it back
-                return Some(unsafe { mem::transmute_copy::<usize, T>(&elem) });
+                return Some(unsafe { mem::transmute_copy::<u64, T>(&elem) });
             }
         }
     }
@@ -405,7 +406,7 @@ where
     fn allocate_bucket(&self, bucket: usize) {
         // The shift-left is equivalent to raising 2 to the power of bucket
         let size = FIRST_BUCKET_SIZE * (1 << bucket);
-        let layout = Layout::array::<AtomicUsize>(size).expect("Size overflowed");
+        let layout = Layout::array::<AtomicU64>(size).expect("Size overflowed");
         let allocator = Global;
         // The reason for using allocate_zeroed is the miri complains about accessing uninitialized memory otherwise
         //
@@ -417,12 +418,12 @@ where
         let ptr = allocator
             .allocate_zeroed(layout)
             .expect("Out of memory")
-            .as_ptr() as *mut AtomicUsize;
+            .as_ptr() as *mut AtomicU64;
         // If the CAS fails, then the bucket has already been initalized with memory
         // and we free the memory we just allocated
         if self.buffers[bucket]
             .compare_exchange(
-                ptr::null_mut::<AtomicUsize>(),
+                ptr::null_mut::<AtomicU64>(),
                 ptr,
                 Ordering::AcqRel,
                 Ordering::Relaxed,
@@ -435,7 +436,7 @@ where
                 // so we can call unwrap() on NonNull::new(). We also know that the pointer
                 // is pointing to the correct memory because we just got it from the allocation.
                 // We know the layout is valid, as it is the same layout we used to allocate.
-                allocator.deallocate(ptr::NonNull::new(ptr as *mut u8).unwrap(), layout);
+                allocator.deallocate(NonNull::new(ptr as *mut u8).unwrap(), layout);
             }
         }
     }
@@ -460,7 +461,7 @@ impl<'a, T> Descriptor<'a, T> {
 }
 
 impl<'a, T> WriteDescriptor<'a, T> {
-    pub fn new(new: usize, old: usize, location: &'a AtomicUsize) -> Self {
+    pub fn new(new: u64, old: u64, location: &'a AtomicU64) -> Self {
         WriteDescriptor {
             new,
             old,
@@ -473,7 +474,7 @@ impl<'a, T> WriteDescriptor<'a, T> {
         Box::into_raw(Box::new(None))
     }
 
-    pub fn new_some_as_ptr(new: usize, old: usize, location: &'a AtomicUsize) -> *mut Option<Self> {
+    pub fn new_some_as_ptr(new: u64, old: u64, location: &'a AtomicU64) -> *mut Option<Self> {
         Box::into_raw(Box::new(Some(WriteDescriptor::new(new, old, location))))
     }
 }
