@@ -1,9 +1,14 @@
 #![feature(allocator_api)]
+#![feature(try_reserve_kind)] // Might not need this
+#![feature(bench_black_box)]
+#![feature(test)]
 #![no_std]
-#[allow(unused_imports)]
 #[deny(unused_unsafe)]
+#[deny(unsafe_op_in_unsafe_fn)]
 #[macro_use]
+
 pub mod leaky;
+pub(crate) mod alloc_error;
 
 #[macro_export]
 macro_rules! vector_impl {
@@ -48,6 +53,7 @@ macro_rules! get_impl_type {
 /// let x = 1 << 2;
 /// assert_eq!(highest_bit(x), 2)
 /// ```
+#[inline]
 pub fn highest_bit(num: usize) -> u32 {
     // Eliminate a jump/branch by not using if statement
     (num == 0) as u32 + 63 - num.leading_zeros()
