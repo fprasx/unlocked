@@ -10,7 +10,7 @@ use alloc::alloc::{handle_alloc_error, Allocator, Global, Layout};
 use alloc::boxed::Box;
 use core::fmt::Debug;
 use core::marker::PhantomData;
-use core::mem::{self, ManuallyDrop};
+use core::mem;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
 use crossbeam_utils::{Backoff, CachePadded};

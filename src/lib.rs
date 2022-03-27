@@ -5,12 +5,11 @@
 #![no_std]
 #[deny(unused_unsafe)]
 #[macro_use]
-
 #[deny(unsafe_op_in_unsafe_fn)]
 pub mod leaky;
+pub(crate) mod alloc_error;
 #[deny(unsafe_op_in_unsafe_fn)]
 pub mod sealed;
-pub(crate) mod alloc_error;
 
 #[macro_export]
 macro_rules! vector_impl {
