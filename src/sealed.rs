@@ -1,3 +1,6 @@
+/*
+
+
 // TODO: add ZST check here/ or in macro
 // TODO: convince compiler we know the size of T
 // https://stackoverflow.com/questions/30330519/compile-time-generic-type-size-check
@@ -8,12 +11,20 @@ use crate::alloc_error::{alloc_guard, capacity_overflow};
 use crate::highest_bit;
 use alloc::alloc::{handle_alloc_error, Allocator, Global, Layout};
 use alloc::boxed::Box;
-use core::fmt::Debug;
 use core::marker::PhantomData;
 use core::mem::{self, ManuallyDrop};
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
+use haphazard;
 use crossbeam_utils::{Backoff, CachePadded};
+
+// Setting up hazard pointers
+// This makes sure they all use the same Domain, guaranteeing the protection is valid.
+#[non_exhaustive]
+struct Family;
+type Domain = haphazard::Domain<Family>;
+type HazardPointer<'domain> = haphazard::HazardPointer<'domain, Family>;
+type HazAtomicPtr<T> = haphazard::AtomicPtr<T, Family>;
 
 // TODO: use FisrtBucketSize trait (as long as it works with the macro)
 /// The number of elements in the first allocation.
@@ -71,20 +82,20 @@ pub const ATOMIC_NULLPTR: AtomicPtr<AtomicU64> = AtomicPtr::new(ptr::null_mut::<
 ///
 /// Memory reclamation is achieved through the use of hazard pointers.
 ///
-#[derive(Debug)]
 pub struct SecVec<'a, T: Sized> {
     // TODO: are we going to have a false sharing problem?
     // Could use a wrapper type if so
     // See: https://github.com/Amanieu/atomic-rs/blob/master/src/fallback.rs#L21
     buffers: CachePadded<Box<[AtomicPtr<AtomicU64>; 60]>>,
-    descriptor: CachePadded<AtomicPtr<Descriptor<'a, T>>>,
+    descriptor: CachePadded<HazAtomicPtr<Descriptor<'a, T>>>,
+    domain: Domain,
     // The data is technically stored as usizes, but it's really just transmuted T's
     _marker: PhantomData<T>,
 }
 
 /// TODO: add docs
 struct Descriptor<'a, T: Sized> {
-    pending: AtomicPtr<Option<WriteDescriptor<'a, T>>>,
+    pending: HazAtomicPtr<Option<WriteDescriptor<'a, T>>>,
     size: usize,
     // For reference counting?
     // TODO: figure out memory reclamation scheme, would be AtomicU64 in that case
@@ -109,9 +120,13 @@ where
         let pending = WriteDescriptor::<T>::new_none_as_ptr();
         let descriptor = Descriptor::<T>::new_as_ptr(pending, 0, 0);
         let buffers = Box::new([ATOMIC_NULLPTR; 60]);
+        let domain = Domain::new(&Family {});
         Self {
-            descriptor: CachePadded::new(AtomicPtr::new(descriptor)),
+            // Constructing HazAtomicPtr is safe because the *mut Descriptor came from Box::into_raw,
+            // and descriptors can only be reclaimed through hazptr mechanisms
+            descriptor: CachePadded::new(unsafe { haphazard::AtomicPtr::new(descriptor) }),
             buffers: CachePadded::new(buffers),
+            domain,
             _marker: PhantomData,
         }
     }
@@ -454,7 +469,11 @@ where
 impl<'a, T> Descriptor<'a, T> {
     pub fn new(pending: *mut Option<WriteDescriptor<'a, T>>, size: usize, _counter: usize) -> Self {
         Descriptor {
-            pending: AtomicPtr::new(pending),
+            // # Safety
+            // This is safe because pending is always the result of calling WriteDescriptor::new_*_as_ptr
+            // which used the pointer from Box::into_raw which is guaranteed to be valid.
+            // Descriptors are only reclaimed through hazard pointer mechanisms
+            pending: unsafe { HazAtomicPtr::new(pending) },
             size,
             _counter,
         }
@@ -497,139 +516,145 @@ where
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
 
-    #[test]
-    fn size_starts_at_0() {
-        let sv = SecVec::<usize>::new();
-        assert_eq!(0, sv.size());
-    }
+//     #[test]
+//     fn size_starts_at_0() {
+//         let sv = SecVec::<usize>::new();
+//         assert_eq!(0, sv.size());
+//     }
 
-    #[test]
-    fn pop_empty_returns_none() {
-        let sv = SecVec::<usize>::new();
-        assert_eq!(sv.pop(), None);
-    }
+//     #[test]
+//     fn pop_empty_returns_none() {
+//         let sv = SecVec::<usize>::new();
+//         assert_eq!(sv.pop(), None);
+//     }
 
-    #[test]
-    fn ten_push_ten_pop() {
-        let sv = SecVec::<isize>::new();
-        for i in 0..10 {
-            sv.push(i);
-        }
-        for i in (0..10).rev() {
-            assert_eq!(sv.pop(), Some(i));
-        }
-    }
+//     #[test]
+//     fn ten_push_ten_pop() {
+//         let sv = SecVec::<isize>::new();
+//         for i in 0..10 {
+//             sv.push(i);
+//         }
+//         for i in (0..10).rev() {
+//             assert_eq!(sv.pop(), Some(i));
+//         }
+//     }
 
-    #[test]
-    fn does_not_allocate_buffers_on_new() {
-        let sv = SecVec::<isize>::new();
-        for buffer in &**sv.buffers {
-            assert!(buffer.load(Ordering::Relaxed).is_null())
-        }
-    }
+//     #[test]
+//     fn does_not_allocate_buffers_on_new() {
+//         let sv = SecVec::<isize>::new();
+//         for buffer in &**sv.buffers {
+//             assert!(buffer.load(Ordering::Relaxed).is_null())
+//         }
+//     }
 
-    #[cfg(not(miri))] // Too slow
-    #[test]
-    #[should_panic] // The allocation is too large
-    fn reserve_usize_max() {
-        let sv = SecVec::<isize>::new();
-        sv.reserve(usize::MAX)
-    }
-}
-#[cfg(not(miri))] // Too slow
-#[cfg(test)]
-mod bench {
-    extern crate std;
-    extern crate test;
-    use super::*;
-    use crossbeam_queue::SegQueue;
-    use std::sync::Arc;
-    use std::sync::Mutex;
-    use std::thread::{self, JoinHandle};
-    use std::vec::Vec;
-    use test::Bencher;
+//     #[cfg(not(miri))] // Too slow
+//     #[test]
+//     #[should_panic] // The allocation is too large
+//     fn reserve_usize_max() {
+//         let sv = SecVec::<isize>::new();
+//         sv.reserve(usize::MAX)
+//     }
+// }
+// #[cfg(not(miri))] // Too slow
+// #[cfg(test)]
+// mod bench {
+//     extern crate std;
+//     extern crate test;
+//     use super::*;
+//     use crossbeam_queue::SegQueue;
+//     use std::sync::Arc;
+//     use std::sync::Mutex;
+//     use std::thread::{self, JoinHandle};
+//     use std::vec::Vec;
+//     use test::Bencher;
 
-    macro_rules! queue {
-        ($($funcname:ident: $threads:expr),*) => {
-            $(
-                #[bench]
-                fn $funcname(b: &mut Bencher) {
-                    let sv = Arc::new(SegQueue::<isize>::new());
-                    b.iter(|| {
-                        #[allow(clippy::needless_collect)]
-                        let handles = (0..$threads)
-                            .map(|_| {
-                                let data = Arc::clone(&sv);
-                                thread::spawn(move || {
-                                    for i in 0..1000 {
-                                        data.push(i);
-                                    }
-                                })
-                            })
-                            .collect::<Vec<JoinHandle<()>>>();
-                        handles.into_iter().for_each(|h| h.join().unwrap());
-                    });
-                }
-                        )*
-        };
-    }
+//     macro_rules! queue {
+//         ($($funcname:ident: $threads:expr),*) => {
+//             $(
+//                 #[bench]
+//                 fn $funcname(b: &mut Bencher) {
+//                     let sv = Arc::new(SegQueue::<isize>::new());
+//                     b.iter(|| {
+//                         #[allow(clippy::needless_collect)]
+//                         let handles = (0..$threads)
+//                             .map(|_| {
+//                                 let data = Arc::clone(&sv);
+//                                 thread::spawn(move || {
+//                                     for i in 0..1000 {
+//                                         data.push(i);
+//                                     }
+//                                 })
+//                             })
+//                             .collect::<Vec<JoinHandle<()>>>();
+//                         handles.into_iter().for_each(|h| h.join().unwrap());
+//                     });
+//                 }
+//                         )*
+//         };
+//     }
 
-    macro_rules! unlocked {
-        ($($funcname:ident: $threads:expr),*) => {
-            $(
-                #[bench]
-                fn $funcname(b: &mut Bencher) {
-                    let sv = Arc::new(SecVec::<isize>::new());
-                    sv.reserve(1000 * $threads);
-                    b.iter(|| {
-                        #[allow(clippy::needless_collect)]
-                        let handles = (0..$threads)
-                            .map(|_| {
-                                let data = Arc::clone(&sv);
-                                thread::spawn(move || {
-                                    for i in 0..1000 {
-                                        data.push(i);
-                                    }
-                                })
-                            })
-                            .collect::<Vec<JoinHandle<()>>>();
-                        handles.into_iter().for_each(|h| h.join().unwrap());
-                    });
-                }
-                        )*
-        };
-    }
+//     macro_rules! unlocked {
+//         ($($funcname:ident: $threads:expr),*) => {
+//             $(
+//                 #[bench]
+//                 fn $funcname(b: &mut Bencher) {
+//                     let sv = Arc::new(SecVec::<isize>::new());
+//                     sv.reserve(1000 * $threads);
+//                     b.iter(|| {
+//                         #[allow(clippy::needless_collect)]
+//                         let handles = (0..$threads)
+//                             .map(|_| {
+//                                 let data = Arc::clone(&sv);
+//                                 thread::spawn(move || {
+//                                     for i in 0..1000 {
+//                                         data.push(i);
+//                                     }
+//                                 })
+//                             })
+//                             .collect::<Vec<JoinHandle<()>>>();
+//                         handles.into_iter().for_each(|h| h.join().unwrap());
+//                     });
+//                 }
+//                         )*
+//         };
+//     }
 
-    macro_rules! mutex {
-        ($($funcname:ident: $threads:expr),*) => {
-            $(
-                #[bench]
-                fn $funcname(b: &mut Bencher) {
-                    let sv = Arc::new(Mutex::new(Vec::<isize>::with_capacity(1000 * $threads)));
-                    b.iter(|| {
-                        #[allow(clippy::needless_collect)]
-                        let handles = (0..$threads)
-                            .map(|_| {
-                                let data = Arc::clone(&sv);
-                                thread::spawn(move || {
-                                    for i in 0..1000 {
-                                        let mut g = data.lock().unwrap();
-                                        g.push(i);
-                                    }
-                                })
-                            })
-                            .collect::<Vec<JoinHandle<()>>>();
-                        handles.into_iter().for_each(|h| h.join().unwrap());
-                    });
-                }
-                        )*
-        };
-    }
-    unlocked!(unlocked1: 1, unlocked2: 2, unlocked3: 3, unlocked4: 4, unlocked5: 5, unlocked6: 6);
-    mutex!(mutex1: 1, mutex2: 2, mutex3: 3, mutex4: 4, mutex5: 5, mutex6: 6, mutex: 20);
-    queue!(q1: 1, q2: 2, q3: 3, q4: 4, q5: 5);
-}
+//     macro_rules! mutex {
+//         ($($funcname:ident: $threads:expr),*) => {
+//             $(
+//                 #[bench]
+//                 fn $funcname(b: &mut Bencher) {
+//                     let sv = Arc::new(Mutex::new(Vec::<isize>::with_capacity(1000 * $threads)));
+//                     b.iter(|| {
+//                         #[allow(clippy::needless_collect)]
+//                         let handles = (0..$threads)
+//                             .map(|_| {
+//                                 let data = Arc::clone(&sv);
+//                                 thread::spawn(move || {
+//                                     for i in 0..1000 {
+//                                         let mut g = data.lock().unwrap();
+//                                         g.push(i);
+//                                     }
+//                                 })
+//                             })
+//                             .collect::<Vec<JoinHandle<()>>>();
+//                         handles.into_iter().for_each(|h| h.join().unwrap());
+//                     });
+//                 }
+//                         )*
+//         };
+//     }
+//     unlocked!(unlocked1: 1, unlocked2: 2, unlocked3: 3, unlocked4: 4, unlocked5: 5, unlocked6: 6);
+//     mutex!(mutex1: 1, mutex2: 2, mutex3: 3, mutex4: 4, mutex5: 5, mutex6: 6, mutex: 20);
+//     queue!(q1: 1, q2: 2, q3: 3, q4: 4, q5: 5);
+// }
+
+
+
+
+
+*/

@@ -57,6 +57,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "haphazard"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "24b2e93fe6d335fbb51f99a26a992875a78de8316d906ca29a1603eb954015cd"
+dependencies = [
+ "loom",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -274,6 +283,7 @@ version = "0.1.0"
 dependencies = [
  "crossbeam-queue",
  "crossbeam-utils",
+ "haphazard",
  "loom",
 ]
 

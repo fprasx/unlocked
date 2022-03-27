@@ -4,16 +4,24 @@ use unlocked::leaky::SecVec;
 fn main() {
     let sv = Arc::new(SecVec::<isize>::new());
     #[allow(clippy::needless_collect)]
-    let handles = (0..10)
-        .map(|_| {
+    let handles = (0..20)
+        .map(|val| {
             let data = Arc::clone(&sv);
-            thread::spawn(move || {
-                for i in 0..100000 {
-                    data.push(i);
-                }
-            })
+            if val % 2 == 0 {
+                thread::spawn(move || {
+                    for i in 0..100000 {
+                        data.push(i);
+                    }
+                })
+            } else {
+                thread::spawn(move || {
+                    for _ in 0..100000 {
+                        data.pop();
+                    }
+                })
+            }
         })
         .collect::<Vec<JoinHandle<()>>>();
     handles.into_iter().for_each(|h| h.join().unwrap());
-    assert_eq!(sv.size(), 10 * 100000);
+    println!("{}", sv.size());
 }

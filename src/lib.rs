@@ -4,10 +4,12 @@
 #![feature(test)]
 #![no_std]
 #[deny(unused_unsafe)]
-#[deny(unsafe_op_in_unsafe_fn)]
 #[macro_use]
 
+#[deny(unsafe_op_in_unsafe_fn)]
 pub mod leaky;
+#[deny(unsafe_op_in_unsafe_fn)]
+pub mod sealed;
 pub(crate) mod alloc_error;
 
 #[macro_export]
