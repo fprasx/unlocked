@@ -100,6 +100,43 @@ struct WriteDescriptor<'a, T: Sized> {
     _marker: PhantomData<T>,
 }
 
+impl<'a, T> Descriptor<'a, T> {
+    pub fn new(pending: *mut Option<WriteDescriptor<'a, T>>, size: usize, _counter: usize) -> Self {
+        Descriptor {
+            pending: AtomicPtr::new(pending),
+            size,
+            _counter,
+        }
+    }
+
+    pub fn new_as_ptr(
+        pending: *mut Option<WriteDescriptor<'a, T>>,
+        size: usize,
+        counter: usize,
+    ) -> *mut Self {
+        Box::into_raw(Box::new(Descriptor::new(pending, size, counter)))
+    }
+}
+
+impl<'a, T> WriteDescriptor<'a, T> {
+    pub fn new(new: u64, old: u64, location: &'a AtomicU64) -> Self {
+        WriteDescriptor {
+            new,
+            old,
+            location,
+            _marker: PhantomData::<T>,
+        }
+    }
+
+    pub fn new_none_as_ptr() -> *mut Option<Self> {
+        Box::into_raw(Box::new(None))
+    }
+
+    pub fn new_some_as_ptr(new: u64, old: u64, location: &'a AtomicU64) -> *mut Option<Self> {
+        Box::into_raw(Box::new(Some(WriteDescriptor::new(new, old, location))))
+    }
+}
+
 impl<'a, T> SecVec<'a, T>
 where
     T: Sized + Copy,
@@ -220,17 +257,18 @@ where
             );
             let next_desc = Descriptor::<T>::new_as_ptr(write_desc, current_desc.size + 1, 0);
             // Handle result of compare_exchange
-            if let Ok(old_ptr) = AtomicPtr::compare_exchange_weak(
+            if AtomicPtr::compare_exchange_weak(
                 &self.descriptor,
                 current_desc as *const _ as *mut _,
                 next_desc,
                 Ordering::AcqRel,
                 Ordering::Relaxed,
-            ) {
-                self.complete_write(unsafe { &*((*next_desc).pending.load(Ordering::Acquire)) });
-                // TODO: remove this once we have a proper memory reclamation strategy
-                // Manually drop prevents dealloc of `ptr` at end of scope
-                let _wont_dealloc = ManuallyDrop::new(old_ptr);
+            )
+            .is_ok()
+            {
+                // We know the current write_desc is the one we just sent in with the compare_exchange
+                // so avoid loading it atomically
+                self.complete_write(unsafe { &*write_desc });
                 break;
             }
             backoff.spin();
@@ -448,43 +486,6 @@ where
                 allocator.deallocate(NonNull::new(ptr as *mut u8).unwrap(), layout);
             }
         }
-    }
-}
-
-impl<'a, T> Descriptor<'a, T> {
-    pub fn new(pending: *mut Option<WriteDescriptor<'a, T>>, size: usize, _counter: usize) -> Self {
-        Descriptor {
-            pending: AtomicPtr::new(pending),
-            size,
-            _counter,
-        }
-    }
-
-    pub fn new_as_ptr(
-        pending: *mut Option<WriteDescriptor<'a, T>>,
-        size: usize,
-        counter: usize,
-    ) -> *mut Self {
-        Box::into_raw(Box::new(Descriptor::new(pending, size, counter)))
-    }
-}
-
-impl<'a, T> WriteDescriptor<'a, T> {
-    pub fn new(new: u64, old: u64, location: &'a AtomicU64) -> Self {
-        WriteDescriptor {
-            new,
-            old,
-            location,
-            _marker: PhantomData::<T>,
-        }
-    }
-
-    pub fn new_none_as_ptr() -> *mut Option<Self> {
-        Box::into_raw(Box::new(None))
-    }
-
-    pub fn new_some_as_ptr(new: u64, old: u64, location: &'a AtomicU64) -> *mut Option<Self> {
-        Box::into_raw(Box::new(Some(WriteDescriptor::new(new, old, location))))
     }
 }
 
