@@ -3,13 +3,20 @@
 #![feature(bench_black_box)]
 #![feature(test)]
 #![no_std]
-#[deny(unused_unsafe)]
+
 #[macro_use]
+#[deny(unused_unsafe)]
 #[deny(unsafe_op_in_unsafe_fn)]
 pub mod leaky;
+
 pub(crate) mod alloc_error;
+
+#[deny(unused_unsafe)]
 #[deny(unsafe_op_in_unsafe_fn)]
 pub mod sealed;
+
+#[macro_use]
+mod bench_macros;
 
 #[macro_export]
 macro_rules! vector_impl {

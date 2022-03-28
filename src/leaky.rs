@@ -547,90 +547,31 @@ mod bench {
     extern crate std;
     extern crate test;
     use super::*;
-    use crossbeam_queue::SegQueue;
-    use std::sync::Arc;
-    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicIsize, Ordering};
+    use std::sync::{Mutex, Arc};
     use std::thread::{self, JoinHandle};
     use std::vec::Vec;
     use test::Bencher;
-
-    macro_rules! queue {
-        ($($funcname:ident: $threads:expr),*) => {
-            $(
-                #[bench]
-                fn $funcname(b: &mut Bencher) {
-                    let sv = Arc::new(SegQueue::<isize>::new());
-                    b.iter(|| {
-                        #[allow(clippy::needless_collect)]
-                        let handles = (0..$threads)
-                            .map(|_| {
-                                let data = Arc::clone(&sv);
-                                thread::spawn(move || {
-                                    for i in 0..1000 {
-                                        data.push(i);
-                                    }
-                                })
-                            })
-                            .collect::<Vec<JoinHandle<()>>>();
-                        handles.into_iter().for_each(|h| h.join().unwrap());
-                    });
-                }
-                        )*
-        };
-    }
-
-    macro_rules! unlocked {
-        ($($funcname:ident: $threads:expr),*) => {
-            $(
-                #[bench]
-                fn $funcname(b: &mut Bencher) {
-                    let sv = Arc::new(SecVec::<isize>::new());
-                    sv.reserve(1000 * $threads);
-                    b.iter(|| {
-                        #[allow(clippy::needless_collect)]
-                        let handles = (0..$threads)
-                            .map(|_| {
-                                let data = Arc::clone(&sv);
-                                thread::spawn(move || {
-                                    for i in 0..1000 {
-                                        data.push(i);
-                                    }
-                                })
-                            })
-                            .collect::<Vec<JoinHandle<()>>>();
-                        handles.into_iter().for_each(|h| h.join().unwrap());
-                    });
-                }
-                        )*
-        };
-    }
-
-    macro_rules! mutex {
-        ($($funcname:ident: $threads:expr),*) => {
-            $(
-                #[bench]
-                fn $funcname(b: &mut Bencher) {
-                    let sv = Arc::new(Mutex::new(Vec::<isize>::with_capacity(1000 * $threads)));
-                    b.iter(|| {
-                        #[allow(clippy::needless_collect)]
-                        let handles = (0..$threads)
-                            .map(|_| {
-                                let data = Arc::clone(&sv);
-                                thread::spawn(move || {
-                                    for i in 0..1000 {
-                                        let mut g = data.lock().unwrap();
-                                        g.push(i);
-                                    }
-                                })
-                            })
-                            .collect::<Vec<JoinHandle<()>>>();
-                        handles.into_iter().for_each(|h| h.join().unwrap());
-                    });
-                }
-                        )*
-        };
-    }
-    unlocked!(unlocked1: 1, unlocked2: 2, unlocked3: 3, unlocked4: 4, unlocked5: 5, unlocked6: 6);
-    mutex!(mutex1: 1, mutex2: 2, mutex3: 3, mutex4: 4, mutex5: 5, mutex6: 6, mutex: 20);
-    queue!(q1: 1, q2: 2, q3: 3, q4: 4, q5: 5);
+    use crate::bench_macros::*;
+    
+    unlocked!(100, unlocked_1: 1);
+    unlocked!(100, unlocked_2: 2);
+    unlocked!(100, unlocked_3: 3);
+    unlocked!(100, unlocked_4: 4);
+    unlocked!(100, unlocked_5: 5);
+    unlocked!(100, unlocked_6: 6);
+    unlocked!(100, unlocked_7: 7);
+    unlocked!(100, unlocked_8: 8);
+    unlocked!(100, unlocked_9: 9);
+    unlocked!(100, unlocked_10: 10);
+    mutex_vec_of_ref!(100, mutex_vec_of_ref_1: 1);
+    mutex_vec_of_ref!(100, mutex_vec_of_ref_2: 2);
+    mutex_vec_of_ref!(100, mutex_vec_of_ref_3: 3);
+    mutex_vec_of_ref!(100, mutex_vec_of_ref_4: 4);
+    mutex_vec_of_ref!(100, mutex_vec_of_ref_5: 5);
+    mutex_vec_of_ref!(100, mutex_vec_of_ref_6: 6);
+    mutex_vec_of_ref!(100, mutex_vec_of_ref_7: 7);
+    mutex_vec_of_ref!(100, mutex_vec_of_ref_8: 8);
+    mutex_vec_of_ref!(100, mutex_vec_of_ref_9: 9);
+    mutex_vec_of_ref!(100, mutex_vec_of_ref_10: 10);
 }
