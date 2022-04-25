@@ -1,11 +1,3 @@
-/*
-
-
-// TODO: add ZST check here/ or in macro
-// TODO: convince compiler we know the size of T
-// https://stackoverflow.com/questions/30330519/compile-time-generic-type-size-check
-// https://github.com/rust-lang/rfcs/blob/master/text/2000-const-generics.md
-// https://github.com/rust-lang/rust/issues/43408
 extern crate alloc;
 use crate::alloc_error::{alloc_guard, capacity_overflow};
 use crate::highest_bit;
@@ -26,66 +18,13 @@ type Domain = haphazard::Domain<Family>;
 type HazardPointer<'domain> = haphazard::HazardPointer<'domain, Family>;
 type HazAtomicPtr<T> = haphazard::AtomicPtr<T, Family>;
 
-// TODO: use FisrtBucketSize trait (as long as it works with the macro)
 /// The number of elements in the first allocation.
 /// Must always be a power of 2.
 pub const FIRST_BUCKET_SIZE: usize = 8;
 
-/// An AtomicPtr containing a null-pointer to an AtomicU64
-#[allow(clippy::declare_interior_mutable_const)] // We actually do want this to be copied
 pub const ATOMIC_NULLPTR: AtomicPtr<AtomicU64> = AtomicPtr::new(ptr::null_mut::<AtomicU64>());
 
-// TODO: make generic parameter N: the number of buckets
-/// Things to talk about in documentation:
-/// Structure
-/// T: Copy bound because of internal usage of transmute_copy
-/// Why no lazy allocation
-///
-/// A lock-free vector over `T: Copy` types that can be safely modified accross thread boundaries.
-///
-/// The vector is an implementation of the algorithm described in the paper _Lock-free Dynamically
-/// Resizable Arrays_ by **Dechev et. al.**, 2006.
-///
-/// # Uses
-///
-/// A concurrent stack that isn't a linked list. Mic Drop
-///
-/// Note: this vector cannot tbe used with ZST's. There is probably a much better way to do what you want.
-/// If you just want to push/pop, you can use an atomic variable to track how many are left on the stack
-/// and then just increment and decrement it.
-///
-/// # Considerations
-///
-/// This vector also uses dynamic allocation heavily. Internal data is allocated on the heap
-/// because memory needs to be reclaimed in a sound way. Calling `new()` requires 3 heap allocations.
-/// The first is just to allocate enough space for the vector's internal data. It is never called
-/// again. The other two allocations set the state of the vector, and similar allocations are made
-/// when pushing and popping.
-///
-/// The vector does not allocate lazily.
-/// Checking whether the vector has already allocated is very expensive (even in a single-threaded
-/// environment, at least one atomic read and compare_exchange), and would incur overhead on all
-/// subsequent operations.
-///
-/// The size of the type is two pointers (16 bytes on 64-bit platforms), but the vector allocates 480
-/// bytes of heap memory upfront. Bear this in mind if you are in a memory constrained environment.
-///
-/// This vector does not support types larger than usize because it uses atomic instructions internally.
-/// Larger types must be accessed through references/pointers.
-///
-/// # Internal structure
-///
-/// Internally, the vector stores elements in buckets, which grow the same way allocations
-/// in a normal vector do. Thus, the first bucket might have size 8, the next size 16, then 32, etc.
-///
-/// The vector relies heavily on the `compare_exchange` instruction to achieve synchronization.
-///
-/// Memory reclamation is achieved through the use of hazard pointers.
-///
 pub struct SecVec<'a, T: Sized> {
-    // TODO: are we going to have a false sharing problem?
-    // Could use a wrapper type if so
-    // See: https://github.com/Amanieu/atomic-rs/blob/master/src/fallback.rs#L21
     buffers: CachePadded<Box<[AtomicPtr<AtomicU64>; 60]>>,
     descriptor: CachePadded<HazAtomicPtr<Descriptor<'a, T>>>,
     domain: Domain,
@@ -93,22 +32,56 @@ pub struct SecVec<'a, T: Sized> {
     _marker: PhantomData<T>,
 }
 
-/// TODO: add docs
 struct Descriptor<'a, T: Sized> {
     pending: HazAtomicPtr<Option<WriteDescriptor<'a, T>>>,
     size: usize,
-    // For reference counting?
-    // TODO: figure out memory reclamation scheme, would be AtomicU64 in that case
-    _counter: usize,
 }
 
-/// TODO: add docs
-/// Both new and old are just  T's transmuted into usize, thus the PhantomData
 struct WriteDescriptor<'a, T: Sized> {
     new: u64,
     old: u64,
     location: &'a AtomicU64,
+    // New and old are transmuted T's
     _marker: PhantomData<T>,
+}
+
+impl<'a, T> Descriptor<'a, T> {
+    pub fn new(pending: *mut Option<WriteDescriptor<'a, T>>, size: usize) -> Self {
+        Descriptor {
+            // # Safety
+            // This is safe because pending is always the result of calling WriteDescriptor::new_*_as_ptr
+            // which used the pointer from Box::into_raw which is guaranteed to be valid.
+            // Descriptors are only reclaimed through hazard pointer mechanisms
+            pending: unsafe { HazAtomicPtr::new(pending) },
+            size,
+        }
+    }
+
+    pub fn new_as_ptr(
+        pending: *mut Option<WriteDescriptor<'a, T>>,
+        size: usize,
+    ) -> *mut Self {
+        Box::into_raw(Box::new(Descriptor::new(pending, size)))
+    }
+}
+
+impl<'a, T> WriteDescriptor<'a, T> {
+    pub fn new(new: u64, old: u64, location: &'a AtomicU64) -> Self {
+        WriteDescriptor {
+            new,
+            old,
+            location,
+            _marker: PhantomData::<T>,
+        }
+    }
+
+    pub fn new_none_as_ptr() -> *mut Option<Self> {
+        Box::into_raw(Box::new(None))
+    }
+
+    pub fn new_some_as_ptr(new: u64, old: u64, location: &'a AtomicU64) -> *mut Option<Self> {
+        Box::into_raw(Box::new(Some(WriteDescriptor::new(new, old, location))))
+    }
 }
 
 impl<'a, T> SecVec<'a, T>
@@ -118,7 +91,7 @@ where
     /// Return of new instance of a SecVec, with capacity 0 and size 0;
     pub fn new() -> Self {
         let pending = WriteDescriptor::<T>::new_none_as_ptr();
-        let descriptor = Descriptor::<T>::new_as_ptr(pending, 0, 0);
+        let descriptor = Descriptor::<T>::new_as_ptr(pending, 0);
         let buffers = Box::new([ATOMIC_NULLPTR; 60]);
         let domain = Domain::new(&Family {});
         Self {
@@ -167,9 +140,6 @@ where
         }
     }
 
-    /// 1. Check if there is a writeop (write-descriptor) pending
-    /// 2. If so, CAS the location in the buffer with the new value
-    /// 3. Set the writeop state to false
     fn complete_write(&self, pending: &Option<WriteDescriptor<T>>) {
         #[allow(unused_must_use)]
         if let Some(writedesc) = pending {
@@ -195,15 +165,6 @@ where
     }
 
     pub fn push(&self, elem: T) {
-        /*
-         * 1. Pull down the current descriptor
-         * 2. Call complete_write on it to clear out a pending writeop
-         * 3. Allocate memory if need be
-         * 4. Create a new write-descriptor
-         * 5. Try to CAS in the new write-descriptor
-         * 6. Go back to step 1 if CAS failed
-         * 7. Call complete_write to finish the write
-         */
         let backoff = Backoff::new(); // Backoff causes significant speedup
         loop {
             // # SAFETY
@@ -233,7 +194,7 @@ where
                 last_elem.load(Ordering::Acquire), // Load from the AtomicU64, which really containes the bytes for T
                 last_elem,
             );
-            let next_desc = Descriptor::<T>::new_as_ptr(write_desc, current_desc.size + 1, 0);
+            let next_desc = Descriptor::<T>::new_as_ptr(write_desc, current_desc.size + 1);
             // Handle result of compare_exchange
             if let Ok(old_ptr) = AtomicPtr::compare_exchange_weak(
                 &self.descriptor,
@@ -253,15 +214,6 @@ where
     }
 
     pub fn pop(&self) -> Option<T> {
-        /*
-        1. Pull down the current descriptor
-        2. Call complete_write on it to clear out a pending writeop
-        3. Read in the element at the end of the array
-        4. Make a new descriptor
-        5. Try to CAS in the new descriptor
-        6. Go back to step 1 if CAS failed
-        7. Return the element that was read in from the end of the array
-        */
         let backoff = Backoff::new(); // Backoff causes significant speedup
         loop {
             let current_desc = unsafe { &*self.descriptor.load(Ordering::Acquire) };
@@ -273,17 +225,8 @@ where
             // #
             // Do not need to worry about underflow for the sub because we would hav already return
             let elem = unsafe { &*self.get(current_desc.size - 1) }.load(Ordering::Acquire);
-            // BUG LOG
-            // let next_desc = Box::into_raw(Box::new(Descriptor::<T> {
-            //     size: current_desc.size - 1,
-            //     pending: AtomicPtr::new(&mut None as *mut Option<WriteDescriptor<T>>),
-            //     counter: 0,
-            // }));
-            //
-            // There was a use-after-free caused by the &mut None being turned into a raw ptr
-            // because the ptr's mem was deallocated when the function returned and the stack frame was destroyed
             let new_pending = WriteDescriptor::<T>::new_none_as_ptr();
-            let next_desc = Descriptor::<T>::new_as_ptr(new_pending, current_desc.size - 1, 0);
+            let next_desc = Descriptor::<T>::new_as_ptr(new_pending, current_desc.size - 1);
             if AtomicPtr::compare_exchange_weak(
                 &self.descriptor,
                 current_desc as *const _ as *mut _,
@@ -303,62 +246,7 @@ where
         }
     }
 
-    // ============================================================
-    // ========================== MEMORY ==========================
-    // ============================================================
-    // Sadly, the vector does not currently allocate lazily
-    // meaning the overhead from storing an array of buckets
-    // is always there
-    //
-    // If we wanted to allocate lazily, we would need to check the
-    // size everytime we push, which is expenseive because we
-    // need to follow a pointer to the descriptor and then check
-    // if there write descriptor
-    //
-    // TODO: It could still faster though, should benchmark it out
-
-    /// TODO: add panic documentation
-    /// TODO: figure out overflow docs
-    /// Reserve enough space for the provided number of elements.
-    ///
-    /// You should always call this if you know how many elements you will need in advance
-    /// because allocation requires a CAS and it's better to do it while there's less
-    /// contention.
-    ///
-    /// Note: if you call reserve with a value larger than the capacity of the vector,
-    /// the vector will allocate as much as it can.
-    ///
-    /// ```rust
-    /// # use unlocked::leaky::SecVec;
-    /// # use std::sync::Arc;
-    /// # use std::thread;
-    /// let sv = Arc::new(SecVec::<isize>::new());
-    /// // Better to CAS there than in a thread
-    /// sv.reserve(10);
-    /// let sv1 = Arc::clone(&sv);
-    /// let t1 = thread::spawn(move || {
-    ///     for _ in 0..5 {
-    ///         sv.push(5);
-    ///     }
-    /// });
-    /// let t2 = thread::spawn(move || {
-    ///     for _ in 0..5 {
-    ///         sv1.push(5);
-    ///     }
-    /// });
-    /// // We know that no allocations happened during the multi-threaded part
-    /// t1.join().unwrap();
-    /// t2.join().unwrap();
-    /// ```
     pub fn reserve(&self, size: usize) {
-        // Method
-        // Calculate the number of buckets needed and their indices,
-        // For each bucket, call allocate_bucket to reserve memory.
-        // A slight problem is that the strategy for calculating which bucket
-        // we are on cannot distinguish between 0 and anything between 1-7.
-        // Therefore, we manually check if the size is 0 and allocate the first
-        // bucket, then proceed to allocate the rest
-
         // Cache the size to prevent another atomic op from due to calling `size()` again
         let current_size = self.size();
         if current_size == 0 {
@@ -408,16 +296,6 @@ where
         }
     }
 
-    /// Allocate the desired bucket from ```self.buffers```
-    ///
-    /// Steps:
-    /// 1. Calculate the amount of memory needed for the bucket
-    /// 2. Allocate the memory
-    /// 3. Try to CAS in the pointer from the allocation.
-    /// If the pointer in self.buffers is currently null, we know that it
-    /// has not been initalized with memory, and the CAS will succeed. If
-    /// CAS fails, then we know the bucket has already been initalized.
-    /// 4. If CAS failed, deallocate the memory from Step 2
     fn allocate_bucket(&self, bucket: usize) {
         // The shift-left is equivalent to raising 2 to the power of bucket
         let size = FIRST_BUCKET_SIZE * (1 << bucket);
@@ -466,46 +344,6 @@ where
     }
 }
 
-impl<'a, T> Descriptor<'a, T> {
-    pub fn new(pending: *mut Option<WriteDescriptor<'a, T>>, size: usize, _counter: usize) -> Self {
-        Descriptor {
-            // # Safety
-            // This is safe because pending is always the result of calling WriteDescriptor::new_*_as_ptr
-            // which used the pointer from Box::into_raw which is guaranteed to be valid.
-            // Descriptors are only reclaimed through hazard pointer mechanisms
-            pending: unsafe { HazAtomicPtr::new(pending) },
-            size,
-            _counter,
-        }
-    }
-
-    pub fn new_as_ptr(
-        pending: *mut Option<WriteDescriptor<'a, T>>,
-        size: usize,
-        counter: usize,
-    ) -> *mut Self {
-        Box::into_raw(Box::new(Descriptor::new(pending, size, counter)))
-    }
-}
-
-impl<'a, T> WriteDescriptor<'a, T> {
-    pub fn new(new: u64, old: u64, location: &'a AtomicU64) -> Self {
-        WriteDescriptor {
-            new,
-            old,
-            location,
-            _marker: PhantomData::<T>,
-        }
-    }
-
-    pub fn new_none_as_ptr() -> *mut Option<Self> {
-        Box::into_raw(Box::new(None))
-    }
-
-    pub fn new_some_as_ptr(new: u64, old: u64, location: &'a AtomicU64) -> *mut Option<Self> {
-        Box::into_raw(Box::new(Some(WriteDescriptor::new(new, old, location))))
-    }
-}
 
 impl<'a, T> Default for SecVec<'a, T>
 where
@@ -657,4 +495,3 @@ where
 
 
 
-*/
