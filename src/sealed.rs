@@ -1,4 +1,4 @@
-extern crate alloc;
+/*extern crate alloc;
 use crate::alloc_error::{alloc_guard, capacity_overflow};
 use crate::highest_bit;
 use alloc::alloc::{handle_alloc_error, Allocator, Global, Layout};
@@ -495,3 +495,4 @@ where
 
 
 
+*/

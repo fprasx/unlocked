@@ -18,6 +18,8 @@ pub mod sealed;
 #[macro_use]
 mod bench_macros;
 
+pub mod hazptr_practice;
+
 #[macro_export]
 macro_rules! vector_impl {
     ($T:ty, $inner_ty:ty, $atomic_ty:ty) => {
