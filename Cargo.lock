@@ -58,9 +58,9 @@ dependencies = [
 
 [[package]]
 name = "haphazard"
-version = "0.1.2"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "24b2e93fe6d335fbb51f99a26a992875a78de8316d906ca29a1603eb954015cd"
+checksum = "09b59739b38c05416cc0a5ad573c5ffdbc48a6f424cb5f883ab7a913f67156db"
 dependencies = [
  "loom",
 ]
