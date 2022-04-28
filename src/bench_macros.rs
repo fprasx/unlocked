@@ -1,8 +1,13 @@
+#[macro_export]
 macro_rules! mutex_vec_of_ref {
     ($num_iters:expr, $($bench_name:ident:$num_threads:expr),*) => {
         $(
             #[bench]
-            fn $bench_name(b: &mut Bencher) {
+            fn $bench_name(b: &mut test::Bencher) {
+                use std::sync::atomic::{AtomicIsize, Ordering};
+                use std::sync::{Mutex, Arc};
+                use std::thread::{self, JoinHandle};
+                use std::vec::Vec;
                 let data = Arc::new(Mutex::new(Vec::<&isize>::with_capacity(
                     $num_iters * $num_threads,
                 )));
@@ -47,13 +52,21 @@ macro_rules! mutex_vec_of_ref {
         )*
     };
 }
+
+// I think I need to put this because the macros are only used in tests
+#[allow(unused_imports)]
 pub(crate) use mutex_vec_of_ref;
 
+#[macro_export]
 macro_rules! unlocked {
     ($num_iters:expr, $($bench_name:ident:$num_threads:expr),*) => {
         $(
             #[bench]
-            fn $bench_name(b: &mut Bencher) {
+            fn $bench_name(b: &mut test::Bencher) {
+                use std::sync::atomic::{AtomicIsize, Ordering};
+                use std::sync::Arc;
+                use std::thread::{self, JoinHandle};
+                use std::vec::Vec;
                 static FIVE: isize = 5;
                 let data = Arc::new(SecVec::<isize>::new());
                 data.reserve($num_iters * $num_threads);
@@ -95,4 +108,7 @@ macro_rules! unlocked {
         )*
     };
 }
+
+// I think I need to put this because the macros are only used in tests
+#[allow(unused_imports)]
 pub(crate) use unlocked;

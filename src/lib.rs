@@ -15,10 +15,9 @@ pub(crate) mod alloc_error;
 #[deny(unsafe_op_in_unsafe_fn)]
 pub mod sealed;
 
-#[macro_use]
-mod bench_macros;
+pub(crate) mod bench_macros;
 
-pub mod hazptr_practice;
+mod hazptr_practice;
 
 #[macro_export]
 macro_rules! vector_impl {

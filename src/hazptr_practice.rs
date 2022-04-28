@@ -1,9 +1,9 @@
 // Practice example for using hazptrs to get a feel for API
 extern crate alloc;
 use alloc::boxed::Box;
-use core::{marker::PhantomData, sync::atomic::AtomicPtr};
+use core::marker::PhantomData;
 
-use haphazard::{self, raw::Pointer, Singleton};
+use haphazard::{self, raw::Pointer};
 
 // Setting up hazard pointers
 // This makes sure they all use the same Domain, guaranteeing the protection is valid.
@@ -80,30 +80,30 @@ mod tests {
     use std::thread::{self, JoinHandle};
     use std::vec::Vec;
 
-    // #[test]
-    // fn leak() {
-    // let data = Arc::new(DataPtr::new(1));
-    // #[allow(clippy::needless_collect)]
-    // let handles = (0..20)
-    //     .map(|val| {
-    //         let adata = Arc::clone(&data);
-    //         if val % 2 == 0 {
-    //             thread::spawn(move || {
-    //                 for i in 0..100000 {
-    //                     adata.store(2)
-    //                 }
-    //             })
-    //         } else {
-    //             thread::spawn(move || {
-    //                 for _ in 0..100000 {
-    //                     adata.load();
-    //                 }
-    //             })
-    //         }
-    //     })
-    //     .collect::<Vec<JoinHandle<()>>>();
-    // handles.into_iter().for_each(|h| h.join().unwrap());
-    // }
+    #[test]
+    fn leak() {
+        let data = Arc::new(DataPtr::new(1));
+        #[allow(clippy::needless_collect)]
+        let handles = (0..20)
+            .map(|val| {
+                let adata = Arc::clone(&data);
+                if val % 2 == 0 {
+                    thread::spawn(move || {
+                        for i in 0..100000 {
+                            adata.store(2)
+                        }
+                    })
+                } else {
+                    thread::spawn(move || {
+                        for _ in 0..100000 {
+                            adata.load();
+                        }
+                    })
+                }
+            })
+            .collect::<Vec<JoinHandle<()>>>();
+        handles.into_iter().for_each(|h| h.join().unwrap());
+    }
 
     #[test]
     fn hazptr_send() {

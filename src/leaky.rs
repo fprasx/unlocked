@@ -536,6 +536,7 @@ mod tests {
     #[cfg(not(miri))] // Too slow
     #[test]
     #[should_panic] // The allocation is too large
+                    // This will cause a sigabrt because the computer will oom
     fn reserve_usize_max() {
         let sv = SecVec::<isize>::new();
         sv.reserve(usize::MAX)
@@ -547,14 +548,9 @@ mod bench {
     extern crate std;
     extern crate test;
     use super::*;
-    use std::sync::atomic::{AtomicIsize, Ordering};
-    use std::sync::{Mutex, Arc};
-    use std::thread::{self, JoinHandle};
-    use std::vec::Vec;
-    use test::Bencher;
     use crate::bench_macros::*;
-    
-    unlocked!(100, unlocked_1: 1);
+
+    crate::bench_macros::unlocked!(100, unlocked_1: 1);
     unlocked!(100, unlocked_2: 2);
     unlocked!(100, unlocked_3: 3);
     unlocked!(100, unlocked_4: 4);
