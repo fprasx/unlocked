@@ -19,24 +19,24 @@ struct DataPtr<T> {
     _marker: PhantomData<T>,
 }
 
-struct Data(usize, usize);
-
 impl<T> DataPtr<T>
 where
-    T: Copy,
+    T: Sized + Copy + Send + Sync,
 {
     fn new(data: T) -> Self {
         Self {
             // this is safe because the ptr comes from into_raw
-            data: unsafe { HazAtomicPtr::new(Box::new(data).into_raw()) },
+            data: unsafe { HazAtomicPtr::from(Box::new(data)) },
             domain: Domain::new(&Family {}),
             _marker: PhantomData::<T>,
         }
     }
 
     fn load(&self) -> T {
-        todo!()
         let mut hp = HazardPointer::new_in_domain(&self.domain);
+        // # Safety // Safe because the ptr is only accessed through hazptr mechanisms
+        let data = unsafe { self.data.load(&mut hp) };
+        *data.unwrap()
     }
 
     fn store(&self, data: T) {
@@ -58,8 +58,9 @@ where
                 Ok(ptr) => {
                     if let Some(ptr) = ptr {
                         // # Safety
+                        // Safe because the ptr is only accessed through hazptr mechanisms
                         unsafe { ptr.retire_in(&self.domain) };
-                        break
+                        break;
                     } else {
                         // None case, not sure when this would happen if cmpxchg is successful
                         continue;
@@ -71,6 +72,43 @@ where
     }
 }
 
-fn run_it() {
-    todo!()
+#[cfg(test)]
+mod tests {
+    use super::*;
+    extern crate std;
+    use std::sync::Arc;
+    use std::thread::{self, JoinHandle};
+    use std::vec::Vec;
+
+    // #[test]
+    // fn leak() {
+    // let data = Arc::new(DataPtr::new(1));
+    // #[allow(clippy::needless_collect)]
+    // let handles = (0..20)
+    //     .map(|val| {
+    //         let adata = Arc::clone(&data);
+    //         if val % 2 == 0 {
+    //             thread::spawn(move || {
+    //                 for i in 0..100000 {
+    //                     adata.store(2)
+    //                 }
+    //             })
+    //         } else {
+    //             thread::spawn(move || {
+    //                 for _ in 0..100000 {
+    //                     adata.load();
+    //                 }
+    //             })
+    //         }
+    //     })
+    //     .collect::<Vec<JoinHandle<()>>>();
+    // handles.into_iter().for_each(|h| h.join().unwrap());
+    // }
+
+    #[test]
+    fn hazptr_send() {
+        let hp: Arc<haphazard::AtomicPtr<isize>> =
+            Arc::new(haphazard::AtomicPtr::from(Box::new(5)));
+        thread::spawn(|| hp);
+    }
 }
