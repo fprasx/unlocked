@@ -1,14 +1,14 @@
-/*extern crate alloc;
+extern crate alloc;
 use crate::alloc_error::{alloc_guard, capacity_overflow};
 use crate::highest_bit;
 use alloc::alloc::{handle_alloc_error, Allocator, Global, Layout};
 use alloc::boxed::Box;
 use core::marker::PhantomData;
 use core::mem::{self, ManuallyDrop};
-use core::ptr::{self, NonNull};
+use core::ptr::{self, addr_of_mut, NonNull, addr_of};
 use core::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
-use haphazard;
 use crossbeam_utils::{Backoff, CachePadded};
+use haphazard;
 
 // Setting up hazard pointers
 // This makes sure they all use the same Domain, guaranteeing the protection is valid.
@@ -57,10 +57,7 @@ impl<'a, T> Descriptor<'a, T> {
         }
     }
 
-    pub fn new_as_ptr(
-        pending: *mut Option<WriteDescriptor<'a, T>>,
-        size: usize,
-    ) -> *mut Self {
+    pub fn new_as_ptr(pending: *mut Option<WriteDescriptor<'a, T>>, size: usize) -> *mut Self {
         Box::into_raw(Box::new(Descriptor::new(pending, size)))
     }
 }
@@ -86,7 +83,7 @@ impl<'a, T> WriteDescriptor<'a, T> {
 
 impl<'a, T> SecVec<'a, T>
 where
-    T: Sized + Copy,
+    T: Sized + Copy + Sync,
 {
     /// Return of new instance of a SecVec, with capacity 0 and size 0;
     pub fn new() -> Self {
@@ -96,7 +93,7 @@ where
         let domain = Domain::new(&Family {});
         Self {
             // Constructing HazAtomicPtr is safe because the *mut Descriptor came from Box::into_raw,
-            // and descriptors can only be reclaimed through hazptr mechanisms
+            // and descriptors can only be reclaimed through hazptr mechanisms (retiring in the same domain)
             descriptor: CachePadded::new(unsafe { haphazard::AtomicPtr::new(descriptor) }),
             buffers: CachePadded::new(buffers),
             domain,
@@ -139,7 +136,7 @@ where
             buffer.load(Ordering::Acquire).add(offset)
         }
     }
-
+    // If cas of actual vaalue fails, someone else did the write
     fn complete_write(&self, pending: &Option<WriteDescriptor<T>>) {
         #[allow(unused_must_use)]
         if let Some(writedesc) = pending {
@@ -150,7 +147,7 @@ where
                 Ordering::AcqRel,
                 Ordering::Relaxed,
             );
-            let new_writedesc = WriteDescriptor::<T>::new_none_as_ptr();
+            let new_writedesc = Box::new(None);
             // # Safety
             // The pointer is valid to dereference because it started off valid and only pointers made from
             // from Descriptor::new_as_ptr() (which are valid because of Box) are CAS'd in
@@ -158,9 +155,12 @@ where
             // The success of the CAS also doesn't matter, if the CAS failed, that means that another thread
             // beat us to the write. Thus, in `push()`, we'll simply load in the new descriptor (this one),
             // and proceed. Acquire/Release semantics guarantee that the next loop iteration will see this new write descriptor
-            unsafe { &*self.descriptor.load(Ordering::Acquire) }
+            let mut hp = HazardPointer::new_in_domain(&self.domain);
+            unsafe { self.descriptor.load(&mut hp) }
+                .unwrap()
                 .pending
-                .store(new_writedesc, Ordering::Release);
+                .store(new_writedesc);
+            // Hazard pointer gets dropped and protection ends
         }
     }
 
@@ -170,13 +170,18 @@ where
             // # SAFETY
             // It is safe to dereference the raw pointer because the first descriptor was valid
             // and all other descriptors are valid descriptors that were CAS'd in
-            let current_desc = unsafe { &*self.descriptor.load(Ordering::Acquire) };
+            let mut hp = HazardPointer::new_in_domain(&self.domain);
+            let current_desc = *unsafe { self.descriptor.load(&mut hp) }.expect("invalid ptr for descriptor in push");
+            // No longer need to guard the desc ptr
+            hp.reset_protection();
             // Complete a pending write op if there is any
             // # SAFETY
             // It is safe to dereference the raw pointer because the first descriptor was valid
             // and all other descriptors are valid descriptors that were CAS'd in
-            let pending = unsafe { &*current_desc.pending.load(Ordering::Acquire) };
+            let pending = unsafe { current_desc.pending.load(&mut hp) }.expect("invalid ptr from write-desc in push");
             self.complete_write(pending);
+            // Only reset the protection after we are done with the reference
+            hp.reset_protection();
             // Allocate memory if need be
             let bucket = (highest_bit(current_desc.size + FIRST_BUCKET_SIZE)
                 - highest_bit(FIRST_BUCKET_SIZE)) as usize;
@@ -197,13 +202,17 @@ where
             let next_desc = Descriptor::<T>::new_as_ptr(write_desc, current_desc.size + 1);
             // Handle result of compare_exchange
             if let Ok(old_ptr) = AtomicPtr::compare_exchange_weak(
-                &self.descriptor,
-                current_desc as *const _ as *mut _,
+                // # Safety
+                // Safe because the pointer we swap in points to a valid object is !null
+                // Thus fulfilling the contract for HazAtomicPtr
+                unsafe { self.descriptor.as_std() },
+                addr_of!(current_desc) as *mut _,
                 next_desc,
                 Ordering::AcqRel,
                 Ordering::Relaxed,
             ) {
-                self.complete_write(unsafe { &*((*next_desc).pending.load(Ordering::Acquire)) });
+                
+                self.complete_write(unsafe { &*((*next_desc).pending.load(&mut hp).expect("invalid ptr for write-desc in push")) });
                 // TODO: remove this once we have a proper memory reclamation strategy
                 // Manually drop prevents dealloc of `ptr` at end of scope
                 let _wont_dealloc = ManuallyDrop::new(old_ptr);
@@ -216,8 +225,15 @@ where
     pub fn pop(&self) -> Option<T> {
         let backoff = Backoff::new(); // Backoff causes significant speedup
         loop {
-            let current_desc = unsafe { &*self.descriptor.load(Ordering::Acquire) };
-            let pending = unsafe { &*current_desc.pending.load(Ordering::Acquire) };
+            let mut hp = HazardPointer::new_in_domain(&self.domain);
+            let current_desc = *unsafe { self.descriptor.load(&mut hp) }
+                .expect("invalid ptr for descriptor in pop");
+            // We are done reading the descriptor so we can now guard a different address
+            hp.reset_protection();
+            let pending = unsafe { current_desc.pending.load(&mut hp) }
+                .expect("invalid ptr for write-descriptor in pop");
+            // We are done reading the writedesc, so no need to guard
+            hp.reset_protection();
             self.complete_write(pending);
             if current_desc.size == 0 {
                 return None;
@@ -228,8 +244,11 @@ where
             let new_pending = WriteDescriptor::<T>::new_none_as_ptr();
             let next_desc = Descriptor::<T>::new_as_ptr(new_pending, current_desc.size - 1);
             if AtomicPtr::compare_exchange_weak(
-                &self.descriptor,
-                current_desc as *const _ as *mut _,
+                // # Safety
+                // Safe because the pointer we swap in points to a valid object is !null
+                // Thus fulfilling the contract for HazAtomicPtr
+                unsafe { self.descriptor.as_std() },
+                addr_of!(current_desc) as *mut _,
                 next_desc,
                 Ordering::AcqRel,
                 Ordering::Relaxed,
@@ -280,7 +299,11 @@ where
         // We know that the raw pointer is pointing to a valid descriptor
         // Because the vector started with a valid instance and the only
         // changes to vector.descriptor are through CAS'ing with another valid descriptor
-        let desc = unsafe { &*self.descriptor.load(Ordering::Acquire) };
+        let mut hp = HazardPointer::new_in_domain(&self.domain);
+        let desc = *unsafe { self.descriptor.load(&mut hp) }
+            .expect("invalid pointer for descriptor in size");
+        // No longer need to guard
+        hp.reset_protection();
         let size = desc.size;
         // # Safety
         // We know that the raw pointer is pointing to a valid writedescriptor
@@ -290,7 +313,9 @@ where
         // If there is a pending descriptor, we subtract one from the size because
         // `push` increments the size, swaps the new descriptor in, and _then_ writes the value
         // Therefore the size is one greater because the write hasn't happened yet
-        match unsafe { &*desc.pending.load(Ordering::Acquire) } {
+        match *unsafe { desc.pending.load(&mut hp) }
+            .expect("invalid ptr reading write-desc in size")
+        {
             Some(_) => size - 1,
             None => size,
         }
@@ -344,10 +369,9 @@ where
     }
 }
 
-
 impl<'a, T> Default for SecVec<'a, T>
 where
-    T: Copy,
+    T: Copy + Sync,
 {
     fn default() -> Self {
         Self::new()
@@ -490,9 +514,3 @@ where
 //     mutex!(mutex1: 1, mutex2: 2, mutex3: 3, mutex4: 4, mutex5: 5, mutex6: 6, mutex: 20);
 //     queue!(q1: 1, q2: 2, q3: 3, q4: 4, q5: 5);
 // }
-
-
-
-
-
-*/
