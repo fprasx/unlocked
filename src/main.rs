@@ -1,27 +1,22 @@
-use std::sync::Arc;
-use std::thread::{self, JoinHandle};
-use unlocked::leaky::SecVec;
+use unlocked::hazptr_practice::*;
 fn main() {
-    let sv = Arc::new(SecVec::<isize>::new());
-    #[allow(clippy::needless_collect)]
-    let handles = (0..20)
-        .map(|val| {
-            let data = Arc::clone(&sv);
-            if val % 2 == 0 {
-                thread::spawn(move || {
-                    for i in 0..100000 {
-                        data.push(i);
-                    }
-                })
-            } else {
-                thread::spawn(move || {
-                    for _ in 0..100000 {
-                        data.pop();
-                    }
-                })
-            }
-        })
-        .collect::<Vec<JoinHandle<()>>>();
-    handles.into_iter().for_each(|h| h.join().unwrap());
-    println!("{}", sv.size());
+    let family = Family::new();
+    let domain = Domain::new(&family);
+
+    // Regular hazard pointer disposal
+    let mut hp = HazardPointer::new_in_domain(&domain);
+    let x = HazAtomicPtr::from(Box::new(5));
+    // # Safety
+    // The ptr will be retired through the domain
+    let loaded = *unsafe { x.load(&mut hp) }.unwrap();
+    println!("{loaded}");
+    // Safe because x's hp was created in `domain`
+    unsafe { x.retire_in(&domain) };
+
+    // Dataptr disposal stuff
+    let data = DataPtr::new(1);
+    let load = data.load();
+    println!("{load}");
+    data.store(2);
+    data.store(3);
 }

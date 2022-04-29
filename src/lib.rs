@@ -17,7 +17,7 @@ pub mod sealed;
 
 pub(crate) mod bench_macros;
 
-mod hazptr_practice;
+pub mod hazptr_practice;
 
 #[macro_export]
 macro_rules! vector_impl {

@@ -8,12 +8,24 @@ use haphazard::{self, raw::Pointer};
 // Setting up hazard pointers
 // This makes sure they all use the same Domain, guaranteeing the protection is valid.
 #[non_exhaustive]
-struct Family;
-type Domain = haphazard::Domain<Family>;
-type HazardPointer<'domain> = haphazard::HazardPointer<'domain, Family>;
-type HazAtomicPtr<T> = haphazard::AtomicPtr<T, Family>;
+pub struct Family;
+pub type Domain = haphazard::Domain<Family>;
+pub type HazardPointer<'domain> = haphazard::HazardPointer<'domain, Family>;
+pub type HazAtomicPtr<T> = haphazard::AtomicPtr<T, Family>;
 
-struct DataPtr<T> {
+impl Family {
+    pub fn new() -> Self {
+        Family {}
+    }
+}
+
+impl Default for Family {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub struct DataPtr<T: Send + Sync> {
     data: HazAtomicPtr<T>,
     domain: Domain,
     _marker: PhantomData<T>,
@@ -23,23 +35,23 @@ impl<T> DataPtr<T>
 where
     T: Sized + Copy + Send + Sync,
 {
-    fn new(data: T) -> Self {
+    pub fn new(data: T) -> Self {
         Self {
             // this is safe because the ptr comes from into_raw
-            data: unsafe { HazAtomicPtr::from(Box::new(data)) },
+            data: HazAtomicPtr::from(Box::new(data)),
             domain: Domain::new(&Family {}),
             _marker: PhantomData::<T>,
         }
     }
 
-    fn load(&self) -> T {
+    pub fn load(&self) -> T {
         let mut hp = HazardPointer::new_in_domain(&self.domain);
         // # Safety // Safe because the ptr is only accessed through hazptr mechanisms
         let data = unsafe { self.data.load(&mut hp) };
         *data.unwrap()
     }
 
-    fn store(&self, data: T) {
+    pub fn store(&self, data: T) {
         // just a simple cas loop
         // # SAFETY
         // this is safe because the ptr comes from into_raw
@@ -72,6 +84,32 @@ where
     }
 }
 
+// We need to properly deal with the pointer in data pointer, all the old ones will already
+// have been dealt with
+impl<T> Drop for DataPtr<T>
+where
+    T: Send + Sync,
+{
+    fn drop(&mut self) {
+        // We have to get the pointer out of self.data because we can retire it while it's still owned
+        // by the struct
+        // # Safety
+        // Since we have exclusive access from &mut self, we can just swap, not CAS
+        // We are replacing with a null-ptr, which is allowed by the contract of haphazard::AtomicPtr::new()
+        let ptr = unsafe { self.data.swap_ptr(core::ptr::null_mut()) }.unwrap();
+        unsafe { ptr.retire_in(&self.domain) };
+        // self.domain.eager_reclaim();
+    }
+}
+
+pub fn hazptr_practice_main() {
+    extern crate std;
+    let data = DataPtr::new(2);
+    data.store(1);
+    data.store(2);
+    std::println!("{}", data.load());
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -89,7 +127,7 @@ mod tests {
                 let adata = Arc::clone(&data);
                 if val % 2 == 0 {
                     thread::spawn(move || {
-                        for i in 0..100000 {
+                        for _ in 0..100000 {
                             adata.store(2)
                         }
                     })
