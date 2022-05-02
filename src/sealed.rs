@@ -8,8 +8,6 @@ use core::marker::PhantomData;
 use core::mem;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
-extern crate std;
-use std::println;
 use crossbeam_utils::{Backoff, CachePadded};
 use haphazard;
 
@@ -28,7 +26,7 @@ pub const FIRST_BUCKET_SIZE: usize = 8;
 #[allow(clippy::declare_interior_mutable_const)]
 pub const ATOMIC_NULLPTR: AtomicPtr<AtomicU64> = AtomicPtr::new(ptr::null_mut::<AtomicU64>());
 
-pub struct SecVec<'a, T: Sized> {
+pub struct SecVec<'a, T: Sized + Copy + Send + Sync> {
     buffers: CachePadded<Box<[AtomicPtr<AtomicU64>; 60]>>,
     descriptor: CachePadded<HazAtomicPtr<Descriptor<'a, T>>>,
     pub domain: Domain,
@@ -58,7 +56,7 @@ impl<'a, T> Descriptor<'a, T> {
             // # Safety
             // This is safe because pending is always the result of calling WriteDescriptor::new_*_as_ptr
             // which used the pointer from Box::into_raw which is guaranteed to be valid.
-            // Descriptors are only reclaimed through hazard pointer mechanisms            
+            // Descriptors are only reclaimed through hazard pointer mechanisms
             pending: unsafe { HazAtomicPtr::new(pending) },
             size,
         }
@@ -88,19 +86,22 @@ impl<'a, T> WriteDescriptor<'a, T> {
     }
 }
 
-impl<'a, T> fmt::Debug for SecVec<'a, T> {
+impl<'a, T> fmt::Debug for SecVec<'a, T>
+where
+    T: Copy + Send + Sync,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SecVec")
-        .field("buffers", &self.buffers)
-        .field("descriptor", &self.descriptor)
-        .field("PhantomData", &self._marker)
-        .finish()
+            .field("buffers", &self.buffers)
+            .field("descriptor", &self.descriptor)
+            .field("PhantomData", &self._marker)
+            .finish()
     }
 }
 
 impl<'a, T> SecVec<'a, T>
 where
-    T: Sized + Copy + Sync,
+    T: Sized + Copy + Sync + Send,
 {
     /// Return of new instance of a SecVec, with capacity 0 and size 0;
     pub fn new() -> Self {
@@ -129,13 +130,17 @@ where
         let pos = i
             .checked_add(FIRST_BUCKET_SIZE)
             .expect("index too large, integer overflow");
+
         let hibit = highest_bit(pos);
+
         let offset = pos ^ (1 << hibit);
+
         // Select the correct buffer to index into
         // # Safety
         // Since hibit = highest_bit(pos), and pos >= FIRST_BUCKET_SIZE
         // The subtraction hibit - highest_bit(FIRST_BUCKET_SIZE) cannot underflow
         let buffer = &self.buffers[(hibit - highest_bit(FIRST_BUCKET_SIZE)) as usize];
+
         // Check that the offset doesn't exceed isize::MAX
         assert!(
             offset
@@ -144,6 +149,7 @@ where
                 .is_some(),
             "pointer offset exceed isize::MAX bytes"
         );
+
         // Offset the pointer to return a pointer to the correct element
         unsafe {
             // # Safety
@@ -153,18 +159,21 @@ where
             buffer.load(Ordering::Acquire).add(offset)
         }
     }
-    // If cas of actual vaalue fails, someone else did the write
-    fn complete_write(&self, pending: &Option<WriteDescriptor<T>>) {
-        #[allow(unused_must_use)]
-        if let Some(writedesc) = pending {
-            AtomicU64::compare_exchange(
+
+    // If cas of actual value fails, someone else did the write
+    fn complete_write(&self, pending: *mut Option<WriteDescriptor<T>>) {
+        // Result of cmpexchng doesn matter
+        if let Some(writedesc) = unsafe { *pending } {
+            let _ = AtomicU64::compare_exchange(
                 writedesc.location,
                 writedesc.old,
                 writedesc.new,
                 Ordering::AcqRel,
                 Ordering::Relaxed,
             );
-            let new_writedesc = Box::new(None);
+
+            let new_writedesc = WriteDescriptor::<T>::new_none_as_ptr();
+
             // # Safety
             // The pointer is valid to dereference because it started off valid and only pointers made from
             // from Descriptor::new_as_ptr() (which are valid because of Box) are CAS'd in
@@ -173,10 +182,14 @@ where
             // beat us to the write. Thus, in `push()`, we'll simply load in the new descriptor (this one),
             // and proceed. Acquire/Release semantics guarantee that the next loop iteration will see this new write descriptor
             let mut hp = HazardPointer::new_in_domain(&self.domain);
-            unsafe { self.descriptor.load(&mut hp) }
-                .unwrap()
-                .pending
-                .store(new_writedesc);
+            let old = unsafe {
+                self.descriptor
+                    .load(&mut hp)
+                    .unwrap()
+                    .pending
+                    .swap_ptr(new_writedesc)
+            };
+            unsafe { old.unwrap().retire_in(&self.domain) };
             // Hazard pointer gets dropped and protection ends
         }
     }
@@ -192,7 +205,7 @@ where
             let pending = unsafe { current_desc.pending.load(&mut wdhp) }
                 .expect("invalid ptr from write-desc in push");
 
-            self.complete_write(pending);
+            self.complete_write(pending as *const _ as *mut _);
             wdhp.reset_protection(); // We no longer need the reference to pending for anything
 
             // If we need more memory, calculate the bucket
@@ -214,20 +227,20 @@ where
 
             let next_desc = Descriptor::<T>::new_as_ptr(next_write_desc, current_desc.size + 1);
 
-            if let Ok(old_ptr) = unsafe { HazAtomicPtr::compare_exchange_weak_ptr(
-                // # Safety
-                // Safe because the pointer we swap in points to a valid object is !null
-                // Thus fulfilling the contract for HazAtomicPtr
-                &self.descriptor,
-                current_desc as *const _ as *mut _,
-                next_desc,
-            ) } {
-                self.complete_write(unsafe {
-                    &*next_write_desc
-                });
+            if let Ok(old_ptr) = unsafe {
+                HazAtomicPtr::compare_exchange_weak_ptr(
+                    // # Safety
+                    // Safe because the pointer we swap in points to a valid object is !null
+                    // Thus fulfilling the contract for HazAtomicPtr
+                    &self.descriptor,
+                    current_desc as *const _ as *mut _,
+                    next_desc,
+                )
+            } {
+                self.complete_write(next_write_desc);
 
                 // TODO: safety comment
-                unsafe {old_ptr.unwrap().retire_in(&self.domain)};
+                unsafe { old_ptr.unwrap().retire_in(&self.domain) };
                 break;
             }
             backoff.spin();
@@ -245,7 +258,7 @@ where
             let pending = unsafe { current_desc.pending.load(&mut wdhp) }
                 .expect("invalid ptr for write-descriptor in pop");
 
-            self.complete_write(pending);
+            self.complete_write(pending as *const _ as *mut _);
 
             if current_desc.size == 0 {
                 return None;
@@ -258,15 +271,16 @@ where
 
             let next_desc = Descriptor::<T>::new_as_ptr(new_pending, current_desc.size - 1);
 
-            if let Ok(old_ptr) = unsafe { HazAtomicPtr::compare_exchange_weak_ptr(
-                // # Safety
-                // Safe because the pointer we swap in points to a valid object is !null
-                // Thus fulfilling the contract for HazAtomicPtr
-                &self.descriptor,
-                current_desc as *const _ as *mut _,
-                next_desc
-            ) }
-            {
+            if let Ok(old_ptr) = unsafe {
+                HazAtomicPtr::compare_exchange_weak_ptr(
+                    // # Safety
+                    // Safe because the pointer we swap in points to a valid object is !null
+                    // Thus fulfilling the contract for HazAtomicPtr
+                    &self.descriptor,
+                    current_desc as *const _ as *mut _,
+                    next_desc,
+                )
+            } {
                 unsafe { old_ptr.unwrap().retire_in(&self.domain) };
                 // SAFETY
                 // This is ok because only 64-bit values can be stored in the vector
@@ -376,56 +390,88 @@ where
 
 impl<'a, T> Default for SecVec<'a, T>
 where
-    T: Copy + Sync,
+    T: Copy + Sync + Send,
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
+impl<'a, T> Drop for SecVec<'a, T>
+where
+    T: Copy + Send + Sync,
+{
+    fn drop(&mut self) {
+        // Drop buffers
+        let allocator = Global;
+        for (bucket, ptr) in self
+            .buffers
+            .iter()
+            .filter(|ptr| !ptr.load(Ordering::Relaxed).is_null())
+            .enumerate()
+        {
+            let size = FIRST_BUCKET_SIZE * (1 << bucket);
+            let layout = match Layout::array::<AtomicU64>(size) {
+                Ok(layout) => layout,
+                Err(_) => capacity_overflow(),
+            };
+            unsafe {
+                // # Safety
+                // We have recreated the exact same layout used to alloc the ptr in `allocate_bucket`
+                // We know the ptr isn't null becase of the filer
+                allocator.deallocate(
+                    NonNull::new(ptr.load(Ordering::Relaxed) as *mut u8).unwrap(),
+                    layout,
+                )
+            };
+        }
+        // Add drop logic for the self.descriptor
+    }
+}
 
-//     #[test]
-//     fn size_starts_at_0() {
-//         let sv = SecVec::<usize>::new();
-//         assert_eq!(0, sv.size());
-//     }
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-//     #[test]
-//     fn pop_empty_returns_none() {
-//         let sv = SecVec::<usize>::new();
-//         assert_eq!(sv.pop(), None);
-//     }
+    #[test]
+    fn size_starts_at_0() {
+        let sv = SecVec::<usize>::new();
+        assert_eq!(0, sv.size());
+    }
 
-//     #[test]
-//     fn ten_push_ten_pop() {
-//         let sv = SecVec::<isize>::new();
-//         for i in 0..10 {
-//             sv.push(i);
-//         }
-//         for i in (0..10).rev() {
-//             assert_eq!(sv.pop(), Some(i));
-//         }
-//     }
+    #[test]
+    fn pop_empty_returns_none() {
+        let sv = SecVec::<usize>::new();
+        assert_eq!(sv.pop(), None);
+    }
 
-//     #[test]
-//     fn does_not_allocate_buffers_on_new() {
-//         let sv = SecVec::<isize>::new();
-//         for buffer in &**sv.buffers {
-//             assert!(buffer.load(Ordering::Relaxed).is_null())
-//         }
-//     }
+    #[test]
+    fn ten_push_ten_pop() {
+        let sv = SecVec::<isize>::new();
+        for i in 0..10 {
+            sv.push(i);
+        }
+        for i in (0..10).rev() {
+            assert_eq!(sv.pop(), Some(i));
+        }
+    }
 
-//     #[cfg(not(miri))] // Too slow
-//     #[test]
-//     #[should_panic] // The allocation is too large
-//     fn reserve_usize_max() {
-//         let sv = SecVec::<isize>::new();
-//         sv.reserve(usize::MAX)
-//     }
-// }
+    #[test]
+    fn does_not_allocate_buffers_on_new() {
+        let sv = SecVec::<isize>::new();
+        for buffer in &**sv.buffers {
+            assert!(buffer.load(Ordering::Relaxed).is_null())
+        }
+    }
+
+    #[cfg(not(miri))] // Too slow
+    #[test]
+    #[should_panic] // The allocation is too large
+    fn reserve_usize_max() {
+        let sv = SecVec::<isize>::new();
+        sv.reserve(usize::MAX)
+    }
+}
 // #[cfg(not(miri))] // Too slow
 // #[cfg(test)]
 // mod bench {
