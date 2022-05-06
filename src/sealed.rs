@@ -227,7 +227,7 @@ where
 
             let next_desc = Descriptor::<T>::new_as_ptr(next_write_desc, current_desc.size + 1);
 
-            if let Ok(old_ptr) = unsafe {
+            if let Ok(replaced) = unsafe {
                 HazAtomicPtr::compare_exchange_weak_ptr(
                     // # Safety
                     // Safe because the pointer we swap in points to a valid object is !null
@@ -240,7 +240,19 @@ where
                 self.complete_write(next_write_desc);
 
                 // TODO: safety comment
-                unsafe { old_ptr.unwrap().retire_in(&self.domain) };
+                let old_ptr = *replaced.unwrap();
+                let old_desc = unsafe { &*old_ptr.as_ptr() };
+                // Extract the old writedesc ptr by swapping it with a null ptr
+                // Then retire the old pointer
+                unsafe {
+                    old_desc
+                        .pending
+                        .swap_ptr(ptr::null_mut())
+                        .unwrap()
+                        .retire_in(&self.domain)
+                };
+                // Retire the old desc ptr
+                unsafe { HazAtomicPtr::new(old_ptr.as_ptr()).retire_in(&self.domain) };
                 break;
             }
             backoff.spin();
@@ -271,7 +283,7 @@ where
 
             let next_desc = Descriptor::<T>::new_as_ptr(new_pending, current_desc.size - 1);
 
-            if let Ok(old_ptr) = unsafe {
+            if let Ok(replaced) = unsafe {
                 HazAtomicPtr::compare_exchange_weak_ptr(
                     // # Safety
                     // Safe because the pointer we swap in points to a valid object is !null
@@ -281,7 +293,20 @@ where
                     next_desc,
                 )
             } {
-                unsafe { old_ptr.unwrap().retire_in(&self.domain) };
+                // TODO: safety comment
+                let old_ptr = *replaced.unwrap();
+                let old_desc = unsafe { &*old_ptr.as_ptr() };
+                // Extract the old writedesc ptr by swapping it with a null ptr
+                // Then retire the old pointer
+                unsafe {
+                    old_desc
+                        .pending
+                        .swap_ptr(ptr::null_mut())
+                        .unwrap()
+                        .retire_in(&self.domain)
+                };
+                // Retire the old desc ptr
+                unsafe { HazAtomicPtr::new(old_ptr.as_ptr()).retire_in(&self.domain) };
                 // SAFETY
                 // This is ok because only 64-bit values can be stored in the vector
                 // We also know that elem is a valid T because it was transmuted into a usize
