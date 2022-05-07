@@ -1,3 +1,6 @@
+// Implementation based on work by Dechev et. al., 2006
+// in their paper Lock-free Dynamically Resizable Arrays
+// https://www.stroustrup.com/lock-free-vector.pdf
 extern crate alloc;
 use crate::alloc_error::{alloc_guard, capacity_overflow};
 use crate::highest_bit;
@@ -189,6 +192,7 @@ where
                     .pending
                     .swap_ptr(new_writedesc)
             };
+            // TODO: add safety comment
             unsafe { old.unwrap().retire_in(&self.domain) };
             // Hazard pointer gets dropped and protection ends
         }
@@ -450,7 +454,19 @@ where
                 )
             };
         }
-        // Add drop logic for the self.descriptor
+        // TODO: add safety comment
+        // Retiring the current desc and wdesc
+        let desc = self.descriptor.load_ptr();
+        unsafe {
+            // retire the wdesc ptr
+            (*desc)
+                .pending
+                .swap_ptr(ptr::null_mut())
+                .unwrap()
+                .retire_in(&self.domain);
+            // retire the desc ptr
+            HazAtomicPtr::new(desc).retire_in(&self.domain)
+        };
     }
 }
 
