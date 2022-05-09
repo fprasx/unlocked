@@ -5,23 +5,8 @@
 This "pythonesque" pseudocode with some pointer operations thrown in shows the
 general API and implementation details of the vector. The pseudocode is a
 conversion of the paper's pseudocode into a more (in my opinion) understandable
-form.
+form. It completely ignores memory reclamation.
 
-```yaml
-# Data Organization
-Vector:
-    Memory,
-    Descriptor
-
-Descriptor:
-    Possible WriteDescriptor
-    Size
-
-WriteDescriptor:
-    Pointer,
-    Element
-    Index
-```
 
 ```python
 # Calculate the index of the correct bucket

@@ -11,6 +11,7 @@
     - [What are Memory Orderings?](./atomics/memory_orderings.md)
     - [Compare-and-Swap](./atomics/cas.md)
 - [Introduction to the Paper](./paper/intro.md)
+    - [Structure of the vector](./paper/structure.md)
 - [Starting Code](./code/starting_code.md)
 - [Memory Allocation](./code/alloc/alloc.md)
 

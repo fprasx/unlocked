@@ -15,7 +15,7 @@ On a hardware level, concurrency is possible because CPU's have multiple cores
 (processors, the chips that do the math). Thus, we can add two numbers on one
 core while dividing two numbers on another core.
 
-[^1]:
-    Your computer might actually just be switching between the applications
-    really fast if you only have one CPU core. Even if you have many cores, it's
-    possible that the the applications could be running on the same core.
+[^1] Your computer might actually just be switching between the applications
+really fast if you only have one CPU core. Even if you have many cores, it's
+possible that the the applications could be running on the same core. It's all
+up to the task scheduler.

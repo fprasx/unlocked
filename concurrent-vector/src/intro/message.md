@@ -13,6 +13,8 @@ around ~half a year ago, so perhaps I'm not really qualified to write this book.
 I'd never touched an atomic variable before I started this project (and I still
 _technically_ haven't), so I really mean it when I say this is a learning
 experience for me. I'll try to document the answers to the questions I have so
-you can learn from them as well.
+you can learn from them as well. There will also be a whole section of
+reflections, as this is also for a school project. You might enjoy that section
+more than the technical sections.
 
 And without further ado . . . `cargo run!`
