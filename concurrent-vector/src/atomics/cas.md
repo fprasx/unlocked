@@ -39,7 +39,7 @@ At this point, there are two things that can happen:
    our assumptions about the state of the vector held, and our change was valid.
 
 At first, this might seem contrived and confusing (as it did to me). I would
-focus on this intuition: _if CAS succeds, loosely, we can say the state during
+focus on this intuition: _if CAS succeeds, loosely, we can say the state during
 the swap was the same as the state we observed when preparing for the swap._ Our
 assumptions were consistent throughout the whole process.
 
