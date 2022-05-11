@@ -33,7 +33,7 @@ pub struct SecVec<'a, T: Sized + Copy + Send + Sync> {
     buffers: CachePadded<Box<[AtomicPtr<AtomicU64>; 60]>>,
     descriptor: CachePadded<HazAtomicPtr<Descriptor<'a, T>>>,
     pub domain: Domain,
-    // The data is technically stored as usizes, but it's really just transmuted T's
+    // Data is stored as transmuted T's
     _marker: PhantomData<T>,
 }
 
@@ -53,25 +53,25 @@ pub struct WriteDescriptor<'a, T: Sized> {
 }
 
 impl<'a, T> Descriptor<'a, T> {
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn new(pending: *mut Option<WriteDescriptor<'a, T>>, size: usize) -> Self {
+    fn new(pending: *mut Option<WriteDescriptor<'a, T>>, size: usize) -> Self {
         Descriptor {
             // # Safety
             // This is safe because pending is always the result of calling WriteDescriptor::new_*_as_ptr
             // which used the pointer from Box::into_raw which is guaranteed to be valid.
-            // Descriptors are only reclaimed through hazard pointer mechanisms
+            // Descriptors are only reclaimed through hazard pointer mechanisms or Box::from_raw
+            // if they were never shared across threads
             pending: unsafe { HazAtomicPtr::new(pending) },
             size,
         }
     }
 
-    pub fn new_as_ptr(pending: *mut Option<WriteDescriptor<'a, T>>, size: usize) -> *mut Self {
+    fn new_as_ptr(pending: *mut Option<WriteDescriptor<'a, T>>, size: usize) -> *mut Self {
         Box::into_raw(Box::new(Descriptor::new(pending, size)))
     }
 }
 
 impl<'a, T> WriteDescriptor<'a, T> {
-    pub fn new(new: u64, old: u64, location: &'a AtomicU64) -> Self {
+    fn new(new: u64, old: u64, location: &'a AtomicU64) -> Self {
         WriteDescriptor {
             new,
             old,
@@ -80,11 +80,11 @@ impl<'a, T> WriteDescriptor<'a, T> {
         }
     }
 
-    pub fn new_none_as_ptr() -> *mut Option<Self> {
+    fn new_none_as_ptr() -> *mut Option<Self> {
         Box::into_raw(Box::new(None))
     }
 
-    pub fn new_some_as_ptr(new: u64, old: u64, location: &'a AtomicU64) -> *mut Option<Self> {
+    fn new_some_as_ptr(new: u64, old: u64, location: &'a AtomicU64) -> *mut Option<Self> {
         Box::into_raw(Box::new(Some(WriteDescriptor::new(new, old, location))))
     }
 }
@@ -113,8 +113,9 @@ where
         let buffers = Box::new([ATOMIC_NULLPTR; 60]);
         let domain = Domain::new(&Family {});
         Self {
+            // # Safety
             // Constructing HazAtomicPtr is safe because the *mut Descriptor came from Box::into_raw,
-            // and descriptors can only be reclaimed through hazptr mechanisms (retiring in the same domain)
+            // and this descriptor can only be reclaimed through hazptr mechanisms (retiring in the same domain)
             descriptor: CachePadded::new(unsafe { haphazard::AtomicPtr::new(descriptor) }),
             buffers: CachePadded::new(buffers),
             domain,
@@ -165,7 +166,7 @@ where
 
     // If cas of actual value fails, someone else did the write
     fn complete_write(&self, pending: *mut Option<WriteDescriptor<T>>) {
-        // Result of cmpexchng doesn matter
+        // Result of cmpxchng doesn matter
         if let Some(writedesc) = unsafe { *pending } {
             let _ = AtomicU64::compare_exchange(
                 writedesc.location,
@@ -177,24 +178,23 @@ where
 
             let new_writedesc = WriteDescriptor::<T>::new_none_as_ptr();
 
-            // # Safety
-            // The pointer is valid to dereference because it started off valid and only pointers made from
-            // from Descriptor::new_as_ptr() (which are valid because of Box) are CAS'd in
-            //
-            // The success of the CAS also doesn't matter, if the CAS failed, that means that another thread
-            // beat us to the write. Thus, in `push()`, we'll simply load in the new descriptor (this one),
-            // and proceed. Acquire/Release semantics guarantee that the next loop iteration will see this new write descriptor
             let mut hp = HazardPointer::new_in_domain(&self.domain);
+
             let old = unsafe {
                 self.descriptor
                     .load(&mut hp)
                     .unwrap()
                     .pending
+                    // # Safety
+                    // new_writedesc conforms to the requirements of HazAtomicPtr::new()
+                    // because it comes from Box::into_raw and is a valid WriteDescriptor
                     .swap_ptr(new_writedesc)
             };
-            // TODO: add safety comment
+
+            // # Safety
+            // Because we swapped out this pointer, no other thread has it,
+            // therefore we are the only thread that can retire it
             unsafe { old.unwrap().retire_in(&self.domain) };
-            // Hazard pointer gets dropped and protection ends
         }
     }
 
@@ -224,7 +224,9 @@ where
 
             let next_write_desc = WriteDescriptor::<T>::new_some_as_ptr(
                 // TODO: address this in macro
-                unsafe { mem::transmute_copy::<T, u64>(&elem) }, // SAFE because we know T has correct size
+                // # Safety
+                // The transmute is safe because we have ensured that T is the correct size at compile time
+                unsafe { mem::transmute_copy::<T, u64>(&elem) },
                 last_elem.load(Ordering::Acquire), // Load from the AtomicU64, which really containes the bytes for T
                 last_elem,
             );
@@ -243,11 +245,19 @@ where
             } {
                 self.complete_write(next_write_desc);
 
-                // TODO: safety comment
                 let old_ptr = *replaced.unwrap();
+
+                // # Safety
+                // Only we have access to the old pointer because it was compare-exchanged out,
+                // therefore we can can make a reference out of the pointer.
+                // The pointer points to a valid descriptor (made through Descriptor::new_as_ptr)
+                // so the pointer is safe to dereference
                 let old_desc = unsafe { &*old_ptr.as_ptr() };
+
                 // Extract the old writedesc ptr by swapping it with a null ptr
-                // Then retire the old pointer
+                // # Safety
+                // We are the only thread with access to the old writedesc (through the old desc ptr),
+                // so we can swap in a null pointer and retire it (no multiple-retire)
                 unsafe {
                     old_desc
                         .pending
@@ -255,10 +265,23 @@ where
                         .unwrap()
                         .retire_in(&self.domain)
                 };
-                // Retire the old desc ptr
+
+                // # Safety
+                // Only we have access to the old_desc ptr so we are the only thread that can retire it (no multiple-retire).
+                // Also, the ptr comes form Box::into_raw and points to a valid Descriptor so it is
+                // safe to make a HazAtomicPtr out of it
                 unsafe { HazAtomicPtr::new(old_ptr.as_ptr()).retire_in(&self.domain) };
                 break;
             }
+
+            // Deallocate the write_desc and desc that we failed to swap in
+            // # Safety
+            // Box the write_desc and desc ptrs were made from Box::into_raw, so it is safe to Box::from_raw
+            unsafe {
+                Box::from_raw(next_write_desc);
+                Box::from_raw(next_desc);
+            }
+
             backoff.spin();
         }
     }
@@ -280,6 +303,8 @@ where
                 return None;
             }
 
+            // TODO: add safety comment
+            // Consider if new desc is swapped in, can we read dealloced memory?
             // Do not need to worry about underflow for the sub because we would have already returned
             let elem = unsafe { &*self.get(current_desc.size - 1) }.load(Ordering::Acquire);
 
@@ -297,11 +322,19 @@ where
                     next_desc,
                 )
             } {
-                // TODO: safety comment
                 let old_ptr = *replaced.unwrap();
+
+                // # Safety
+                // Only we have access to the old pointer because it was compare-exchanged out,
+                // therefore we can can make a reference out of the pointer.
+                // The pointer points to a valid descriptor (made through Descriptor::new_as_ptr)
+                // so the pointer is safe to dereference
                 let old_desc = unsafe { &*old_ptr.as_ptr() };
+
                 // Extract the old writedesc ptr by swapping it with a null ptr
-                // Then retire the old pointer
+                // # Safety
+                // We are the only thread with access to the old writedesc (through the old desc ptr),
+                // so we can swap in a null pointer and retire it (no multiple-retire)
                 unsafe {
                     old_desc
                         .pending
@@ -311,12 +344,23 @@ where
                 };
                 // Retire the old desc ptr
                 unsafe { HazAtomicPtr::new(old_ptr.as_ptr()).retire_in(&self.domain) };
+
                 // SAFETY
-                // This is ok because only 64-bit values can be stored in the vector
+                // TODO: address this in macro
+                // This is ok because we ensure T is the correct size at compile time
                 // We also know that elem is a valid T because it was transmuted into a usize
                 // from a valid T, therefore we are only transmuting it back
                 return Some(unsafe { mem::transmute_copy::<u64, T>(&elem) });
             }
+
+            // Deallocate the write_desc and desc that we failed to swap in
+            // # Safety
+            // Box the write_desc and desc ptrs were made from Box::into_raw, so it is safe to Box::from_raw
+            unsafe {
+                Box::from_raw(new_pending);
+                Box::from_raw(next_desc);
+            }
+
             backoff.spin();
         }
     }
@@ -327,10 +371,12 @@ where
         if current_size == 0 {
             self.allocate_bucket(0);
         }
+
         // Number of allocations needed for current size
         let mut num_current_allocs =
             highest_bit(current_size.saturating_add(FIRST_BUCKET_SIZE) - 1)
                 .saturating_sub(highest_bit(FIRST_BUCKET_SIZE));
+
         // Compare with the number of allocations needed for size `new`
         while num_current_allocs
             < highest_bit(size.saturating_add(FIRST_BUCKET_SIZE) - 1)
@@ -343,7 +389,7 @@ where
 
     /// Return the size of the vector, taking into account a pending write operation
     /// ```rust
-    /// # use unlocked::leaky::SecVec;
+    /// # use unlocked::sealed::SecVec;
     /// let sv = SecVec::<isize>::new();
     /// sv.push(-1);
     /// sv.push(-2);
@@ -360,6 +406,8 @@ where
         // If there is a pending descriptor, we subtract one from the size because
         // `push` increments the size, swaps the new descriptor in, and _then_ writes the value
         // Therefore the size is one greater because the write hasn't happened yet
+        // # Safety
+        // Descriptors available to multiple threads are always retired through &self.domain
         let mut wdhp = HazardPointer::new_in_domain(&self.domain);
         match unsafe { desc.pending.load(&mut wdhp) }
             .expect("invalid ptr reading write-desc in size")
@@ -376,12 +424,15 @@ where
             Ok(layout) => layout,
             Err(_) => capacity_overflow(),
         };
+
         // Make sure allocation is ok
         match alloc_guard(layout.size()) {
             Ok(_) => {}
             Err(_) => capacity_overflow(),
         }
+
         let allocator = Global;
+
         // The reason for using allocate_zeroed is that miri complains about accessing uninitialized memory otherwise
         //
         // The situation is when we allocate the memory, and then try to CAS a new value in:
@@ -394,6 +445,7 @@ where
             Ok(ptr) => ptr.as_ptr() as *mut AtomicU64,
             Err(_) => handle_alloc_error(layout),
         };
+
         // If the CAS fails, then the bucket has already been initalized with memory
         // and we free the memory we just allocated
         if self.buffers[bucket]
@@ -406,7 +458,7 @@ where
             .is_err()
         {
             unsafe {
-                // SAFETY
+                // # Safety
                 // We know that the pointer returned from the allocation is NonNull
                 // so we can call unwrap() on NonNull::new(). We also know that the pointer
                 // is pointing to the correct memory because we just got it from the allocation.
@@ -438,6 +490,7 @@ where
             .iter()
             .filter(|ptr| !ptr.load(Ordering::Relaxed).is_null())
             .enumerate()
+        // Getting all non-null buckets
         {
             let size = FIRST_BUCKET_SIZE * (1 << bucket);
             let layout = match Layout::array::<AtomicU64>(size) {
@@ -454,8 +507,12 @@ where
                 )
             };
         }
-        // TODO: add safety comment
+
         // Retiring the current desc and wdesc
+        // # Safety
+        // Since we have &mut self, we have exclusive access, so we can retire the desc and wdesc ptrs.
+        // It is safe to deref the ptr to the desc because it is valid because it was created with
+        // Descriptor::new_as_ptr.
         let desc = self.descriptor.load_ptr();
         unsafe {
             // retire the wdesc ptr
@@ -507,7 +564,7 @@ mod tests {
 
     #[cfg(not(miri))] // Too slow
     #[test]
-    #[should_panic] // The allocation is too large
+    #[should_panic] // The allocation is too large, will SIGABRT
     fn reserve_usize_max() {
         let sv = SecVec::<isize>::new();
         sv.reserve(usize::MAX)

@@ -1,8 +1,10 @@
 use unlocked::sealed::SecVec;
 fn main() {
     let sv = SecVec::<isize>::new();
-    for _ in 0..100 {
-        sv.push(1);
+    for i in 1..11 {
+        sv.push(i);
     }
-    println!("{sv:?}")
+    for _ in 1..11 {
+        sv.pop();
+    }
 }
