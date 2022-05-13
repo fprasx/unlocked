@@ -259,11 +259,15 @@ where
                 // We are the only thread with access to the old writedesc (through the old desc ptr),
                 // so we can swap in a null pointer and retire it (no multiple-retire)
                 unsafe {
-                    old_desc
+                    // old_desc
+                    //     .pending
+                    //     .swap_ptr(0x1 as *mut _)
+                    //     .unwrap()
+                    //     .retire_in(&self.domain)
+                    let old_wdesc_ptr = old_desc
                         .pending
-                        .swap_ptr(ptr::null_mut())
-                        .unwrap()
-                        .retire_in(&self.domain)
+                        .load_ptr();
+                    HazAtomicPtr::new(old_wdesc_ptr).retire_in(&self.domain);
                 };
 
                 // # Safety
@@ -336,11 +340,10 @@ where
                 // We are the only thread with access to the old writedesc (through the old desc ptr),
                 // so we can swap in a null pointer and retire it (no multiple-retire)
                 unsafe {
-                    old_desc
+                    let old_wdesc_ptr = old_desc
                         .pending
-                        .swap_ptr(ptr::null_mut())
-                        .unwrap()
-                        .retire_in(&self.domain)
+                        .load_ptr();
+                    HazAtomicPtr::new(old_wdesc_ptr).retire_in(&self.domain);
                 };
                 // Retire the old desc ptr
                 unsafe { HazAtomicPtr::new(old_ptr.as_ptr()).retire_in(&self.domain) };
