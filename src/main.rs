@@ -15,7 +15,7 @@ fn main() {
         .map(|_| {
             let data = Arc::clone(&data);
             thread::spawn(move || {
-                for _ in 0..1000 {
+                for _ in 0..100 {
                     data.push(FIVE);
                 }
             })
@@ -29,7 +29,7 @@ fn main() {
             let data = Arc::clone(&data);
             let sum = Arc::clone(&sum);
             thread::spawn(move || {
-                for _ in 0..1000 {
+                for _ in 0..100 {
                     sum.fetch_add(data.pop().unwrap_or(0), Ordering::Relaxed);
                 }
             })

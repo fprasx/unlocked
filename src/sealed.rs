@@ -38,7 +38,7 @@ pub struct SecVec<'a, T: Sized + Copy + Send + Sync> {
 }
 
 #[derive(Debug)]
-pub struct Descriptor<'a, T: Sized> {
+pub struct Descriptor<'a, T: Sized + Send> {
     pending: HazAtomicPtr<Option<WriteDescriptor<'a, T>>>,
     size: usize,
 }
@@ -52,7 +52,10 @@ pub struct WriteDescriptor<'a, T: Sized> {
     _marker: PhantomData<T>,
 }
 
-impl<'a, T> Descriptor<'a, T> {
+impl<'a, T> Descriptor<'a, T>
+where
+    T: Send,
+{
     fn new(pending: *mut Option<WriteDescriptor<'a, T>>, size: usize) -> Self {
         Descriptor {
             // # Safety
@@ -101,6 +104,12 @@ where
             .finish()
     }
 }
+
+// fn load_wdesc<'a, T: Send + Sync>(desc: &'a Descriptor<T>) -> &'a Option<WriteDescriptor<'a, T>> {
+//     let mut wdhp = haphazard::HazardPointer::new();
+//     unsafe {
+//     desc.pending.load(&mut wdhp).unwrap()
+// }
 
 impl<'a, T> SecVec<'a, T>
 where
@@ -204,14 +213,15 @@ where
             let mut dhp = HazardPointer::new_in_domain(&self.domain);
             let current_desc = unsafe { self.descriptor.load(&mut dhp) }
                 .expect("invalid ptr for descriptor in push");
+            {
+                let mut wdhp = HazardPointer::new_in_domain(&self.domain);
+                let pending = unsafe { current_desc.pending.load(&mut wdhp) }
+                    .expect("invalid ptr from write-desc in push");
 
-            let mut wdhp = HazardPointer::new_in_domain(&self.domain);
-            let pending = unsafe { current_desc.pending.load(&mut wdhp) }
-                .expect("invalid ptr from write-desc in push");
-
-            self.complete_write(pending as *const _ as *mut _);
-            wdhp.reset_protection(); // We no longer need the reference to pending for anything
-
+                self.complete_write(pending as *const _ as *mut _);
+                // TODO: remove this
+                wdhp.reset_protection(); // We no longer need the reference to pending for anything
+            }
             // If we need more memory, calculate the bucket
             let bucket = (highest_bit(current_desc.size + FIRST_BUCKET_SIZE)
                 - highest_bit(FIRST_BUCKET_SIZE)) as usize;
@@ -244,37 +254,10 @@ where
                 )
             } {
                 self.complete_write(next_write_desc);
-
-                let old_ptr = *replaced.unwrap();
-
-                // # Safety
-                // Only we have access to the old pointer because it was compare-exchanged out,
-                // therefore we can can make a reference out of the pointer.
-                // The pointer points to a valid descriptor (made through Descriptor::new_as_ptr)
-                // so the pointer is safe to dereference
-                let old_desc = unsafe { &*old_ptr.as_ptr() };
-
-                // Extract the old writedesc ptr by swapping it with a null ptr
-                // # Safety
-                // We are the only thread with access to the old writedesc (through the old desc ptr),
-                // so we can swap in a null pointer and retire it (no multiple-retire)
+                // TODO: safety comment
                 unsafe {
-                    // old_desc
-                    //     .pending
-                    //     .swap_ptr(0x1 as *mut _)
-                    //     .unwrap()
-                    //     .retire_in(&self.domain)
-                    let old_wdesc_ptr = old_desc
-                        .pending
-                        .load_ptr();
-                    HazAtomicPtr::new(old_wdesc_ptr).retire_in(&self.domain);
-                };
-
-                // # Safety
-                // Only we have access to the old_desc ptr so we are the only thread that can retire it (no multiple-retire).
-                // Also, the ptr comes form Box::into_raw and points to a valid Descriptor so it is
-                // safe to make a HazAtomicPtr out of it
-                unsafe { HazAtomicPtr::new(old_ptr.as_ptr()).retire_in(&self.domain) };
+                    replaced.unwrap().retire_in(&self.domain);
+                }
                 break;
             }
 
@@ -282,7 +265,8 @@ where
             // # Safety
             // Box the write_desc and desc ptrs were made from Box::into_raw, so it is safe to Box::from_raw
             unsafe {
-                Box::from_raw(next_write_desc);
+                // TODO: wdesc gets dropped in next_desc drop impl
+                // Box::from_raw(next_write_desc);
                 Box::from_raw(next_desc);
             }
 
@@ -296,13 +280,15 @@ where
             let mut dhp = HazardPointer::new_in_domain(&self.domain);
             let current_desc = unsafe { self.descriptor.load(&mut dhp) }
                 .expect("invalid ptr for descriptor in pop");
+            {
+                let mut wdhp = HazardPointer::new_in_domain(&self.domain);
+                let pending = unsafe { current_desc.pending.load(&mut wdhp) }
+                    .expect("invalid ptr for write-descriptor in pop");
 
-            let mut wdhp = HazardPointer::new_in_domain(&self.domain);
-            let pending = unsafe { current_desc.pending.load(&mut wdhp) }
-                .expect("invalid ptr for write-descriptor in pop");
-
-            self.complete_write(pending as *const _ as *mut _);
-
+                self.complete_write(pending as *const _ as *mut _);
+                // TODO: remove this
+                wdhp.reset_protection(); // We no longer need the reference to pending for anything
+            }
             if current_desc.size == 0 {
                 return None;
             }
@@ -326,27 +312,10 @@ where
                     next_desc,
                 )
             } {
-                let old_ptr = *replaced.unwrap();
-
-                // # Safety
-                // Only we have access to the old pointer because it was compare-exchanged out,
-                // therefore we can can make a reference out of the pointer.
-                // The pointer points to a valid descriptor (made through Descriptor::new_as_ptr)
-                // so the pointer is safe to dereference
-                let old_desc = unsafe { &*old_ptr.as_ptr() };
-
-                // Extract the old writedesc ptr by swapping it with a null ptr
-                // # Safety
-                // We are the only thread with access to the old writedesc (through the old desc ptr),
-                // so we can swap in a null pointer and retire it (no multiple-retire)
+                // TODO: safety comment
                 unsafe {
-                    let old_wdesc_ptr = old_desc
-                        .pending
-                        .load_ptr();
-                    HazAtomicPtr::new(old_wdesc_ptr).retire_in(&self.domain);
-                };
-                // Retire the old desc ptr
-                unsafe { HazAtomicPtr::new(old_ptr.as_ptr()).retire_in(&self.domain) };
+                    replaced.unwrap().retire_in(&self.domain);
+                }
 
                 // SAFETY
                 // TODO: address this in macro
@@ -360,7 +329,8 @@ where
             // # Safety
             // Box the write_desc and desc ptrs were made from Box::into_raw, so it is safe to Box::from_raw
             unsafe {
-                Box::from_raw(new_pending);
+                // TODO: wdesc gets dropped in next_desc drop impl
+                // Box::from_raw(new_pending);
                 Box::from_raw(next_desc);
             }
 
@@ -481,7 +451,7 @@ where
     }
 }
 
-impl<'a, T> Drop for SecVec<'a, T>
+impl<'a, T> Drop for SecVec<'_, T>
 where
     T: Copy + Send + Sync,
 {
@@ -518,15 +488,27 @@ where
         // Descriptor::new_as_ptr.
         let desc = self.descriptor.load_ptr();
         unsafe {
-            // retire the wdesc ptr
-            (*desc)
-                .pending
-                .swap_ptr(ptr::null_mut())
-                .unwrap()
-                .retire_in(&self.domain);
-            // retire the desc ptr
-            HazAtomicPtr::new(desc).retire_in(&self.domain)
+            Box::from_raw(desc);
         };
+    }
+}
+
+impl<'a, T> Drop for Descriptor<'_, T>
+where
+    T: Send,
+{
+    fn drop(&mut self) {
+        // TODO: safety comment
+        // Must ensure ref to wdesc never outlasts ref to desc
+        unsafe {
+            Box::from_raw(
+                self.pending
+                    .swap_ptr(ptr::null_mut())
+                    .unwrap()
+                    .into_inner()
+                    .as_ptr(),
+            );
+        }
     }
 }
 
