@@ -33,8 +33,7 @@ pub struct SecVec<'a, T: Sized + Copy + Send + Sync> {
     buffers: CachePadded<Box<[AtomicPtr<AtomicU64>; 60]>>,
     descriptor: CachePadded<HazAtomicPtr<Descriptor<'a, T>>>,
     pub domain: Domain,
-    // Data is stored as transmuted T's
-    _marker: PhantomData<T>,
+    _marker: PhantomData<T>, // Data is stored as transmuted T's
 }
 
 #[derive(Debug)]
@@ -48,8 +47,8 @@ pub struct WriteDescriptor<'a, T: Sized> {
     new: u64,
     old: u64,
     location: &'a AtomicU64,
-    // New and old are transmuted T's
-    _marker: PhantomData<T>,
+    _marker: PhantomData<T>, // New and old are transmuted T's
+
 }
 
 impl<'a, T> Descriptor<'a, T>
@@ -104,12 +103,6 @@ where
             .finish()
     }
 }
-
-// fn load_wdesc<'a, T: Send + Sync>(desc: &'a Descriptor<T>) -> &'a Option<WriteDescriptor<'a, T>> {
-//     let mut wdhp = haphazard::HazardPointer::new();
-//     unsafe {
-//     desc.pending.load(&mut wdhp).unwrap()
-// }
 
 impl<'a, T> SecVec<'a, T>
 where
@@ -168,13 +161,15 @@ where
             // # Safety
             // We know that we can offset the pointer because we will have allocated a bucket
             // to store the value. Since we only call values that are `self.descriptor.size` or smaller,
-            // We know the offset will not go out of bounds because of the assert.
+            // we know the offset will not go out of bounds because of the assert.
             buffer.load(Ordering::Acquire).add(offset)
         }
     }
 
-    // If cas of actual value fails, someone else did the write
+    
+    /// Complete the given write operation, set the current write operation to None
     fn complete_write(&self, pending: *mut Option<WriteDescriptor<T>>) {
+        // If cas of actual value fails, someone else did the write
         // Result of cmpxchng doesn matter
         if let Some(writedesc) = unsafe { *pending } {
             let _ = AtomicU64::compare_exchange(
@@ -201,8 +196,9 @@ where
             };
 
             // # Safety
-            // Because we swapped out this pointer, no other thread has it,
-            // therefore we are the only thread that can retire it
+            // We are the only thread that will retire this pointer because
+            // only one thread can get the result of the swap (this one).
+            // Two threads couldn't have performed a swap and both got this pointer.
             unsafe { old.unwrap().retire_in(&self.domain) };
         }
     }
@@ -213,15 +209,19 @@ where
             let mut dhp = HazardPointer::new_in_domain(&self.domain);
             let current_desc = unsafe { self.descriptor.load(&mut dhp) }
                 .expect("invalid ptr for descriptor in push");
+
+            // Use a block to make explicit that the use of the wdesc does not outlive the use of the desc.
+            // This means that when the desc is dropped, there will be no references to the wdesc inside.
+            // And we can deallocate the wdesc with `Box::from_raw`
             {
                 let mut wdhp = HazardPointer::new_in_domain(&self.domain);
                 let pending = unsafe { current_desc.pending.load(&mut wdhp) }
                     .expect("invalid ptr from write-desc in push");
 
                 self.complete_write(pending as *const _ as *mut _);
-                // TODO: remove this
-                wdhp.reset_protection(); // We no longer need the reference to pending for anything
+                // Hazard pointer is dropped, protection ends
             }
+
             // If we need more memory, calculate the bucket
             let bucket = (highest_bit(current_desc.size + FIRST_BUCKET_SIZE)
                 - highest_bit(FIRST_BUCKET_SIZE)) as usize;
@@ -235,9 +235,10 @@ where
             let next_write_desc = WriteDescriptor::<T>::new_some_as_ptr(
                 // TODO: address this in macro
                 // # Safety
-                // The transmute is safe because we have ensured that T is the correct size at compile time
+                // The `transmute_copy` is safe because we have ensured that T is the correct size at compile time
                 unsafe { mem::transmute_copy::<T, u64>(&elem) },
-                last_elem.load(Ordering::Acquire), // Load from the AtomicU64, which really containes the bytes for T
+                // Load from the AtomicU64, which really containes the bytes for T
+                last_elem.load(Ordering::Acquire), 
                 last_elem,
             );
 
@@ -246,15 +247,21 @@ where
             if let Ok(replaced) = unsafe {
                 HazAtomicPtr::compare_exchange_weak_ptr(
                     // # Safety
-                    // Safe because the pointer we swap in points to a valid object is !null
-                    // Thus fulfilling the contract for HazAtomicPtr
+                    // Safe because the pointer we swap in points to a valid object that is !null
                     &self.descriptor,
                     current_desc as *const _ as *mut _,
                     next_desc,
                 )
             } {
                 self.complete_write(next_write_desc);
-                // TODO: safety comment
+
+                // # Safety
+                // Since the we only retire when swapping out a pointer, this is the only thread that will
+                // retire, since only one thread receives the result of the swap (this one)
+                //
+                // There will never be another load call to the ptr because all calls will go the new one.
+                // Since all uses of the inner wdesc are contained within the lifetime of the reference
+                // to the desc, there will also be no new loads on the inner wdesc.
                 unsafe {
                     replaced.unwrap().retire_in(&self.domain);
                 }
@@ -265,8 +272,7 @@ where
             // # Safety
             // Box the write_desc and desc ptrs were made from Box::into_raw, so it is safe to Box::from_raw
             unsafe {
-                // TODO: wdesc gets dropped in next_desc drop impl
-                // Box::from_raw(next_write_desc);
+                // Note: the inner wdesc also get's dropped as part of the desc's drop impl
                 Box::from_raw(next_desc);
             }
 
@@ -280,15 +286,19 @@ where
             let mut dhp = HazardPointer::new_in_domain(&self.domain);
             let current_desc = unsafe { self.descriptor.load(&mut dhp) }
                 .expect("invalid ptr for descriptor in pop");
+
+            // Use a block to make explicit that the use of the wdesc does not outlive the use of the desc.
+            // This means that when the desc is dropped, there will be no references to the wdesc inside.
+            // And we can deallocate the wdesc with `Box::from_raw`
             {
                 let mut wdhp = HazardPointer::new_in_domain(&self.domain);
                 let pending = unsafe { current_desc.pending.load(&mut wdhp) }
                     .expect("invalid ptr for write-descriptor in pop");
 
                 self.complete_write(pending as *const _ as *mut _);
-                // TODO: remove this
-                wdhp.reset_protection(); // We no longer need the reference to pending for anything
+                // Hazard pointer is dropped, protection ends
             }
+
             if current_desc.size == 0 {
                 return None;
             }
@@ -305,19 +315,24 @@ where
             if let Ok(replaced) = unsafe {
                 HazAtomicPtr::compare_exchange_weak_ptr(
                     // # Safety
-                    // Safe because the pointer we swap in points to a valid object is !null
-                    // Thus fulfilling the contract for HazAtomicPtr
+                    // Safe because the pointer we swap in points to a valid object that is !null
                     &self.descriptor,
                     current_desc as *const _ as *mut _,
                     next_desc,
                 )
             } {
-                // TODO: safety comment
+                // # Safety
+                // Since the we only retire when swapping out a pointer, this is the only thread that will
+                // retire, since only one thread receives the result of the swap (this one)
+                //
+                // There will never be another load call to the ptr because all calls will go the new one.
+                // Since all uses of the inner wdesc are contained within the lifetime of the reference
+                // to the desc, there will also be no new loads on the inner wdesc.
                 unsafe {
                     replaced.unwrap().retire_in(&self.domain);
                 }
 
-                // SAFETY
+                // # Safety 
                 // TODO: address this in macro
                 // This is ok because we ensure T is the correct size at compile time
                 // We also know that elem is a valid T because it was transmuted into a usize
@@ -329,8 +344,7 @@ where
             // # Safety
             // Box the write_desc and desc ptrs were made from Box::into_raw, so it is safe to Box::from_raw
             unsafe {
-                // TODO: wdesc gets dropped in next_desc drop impl
-                // Box::from_raw(new_pending);
+                // Note: the inner wdesc also get's dropped as part of the desc's drop impl
                 Box::from_raw(next_desc);
             }
 
@@ -555,96 +569,3 @@ mod tests {
         sv.reserve(usize::MAX)
     }
 }
-// #[cfg(not(miri))] // Too slow
-// #[cfg(test)]
-// mod bench {
-//     extern crate std;
-//     extern crate test;
-//     use super::*;
-//     use crossbeam_queue::SegQueue;
-//     use std::sync::Arc;
-//     use std::sync::Mutex;
-//     use std::thread::{self, JoinHandle};
-//     use std::vec::Vec;
-//     use test::Bencher;
-
-//     macro_rules! queue {
-//         ($($funcname:ident: $threads:expr),*) => {
-//             $(
-//                 #[bench]
-//                 fn $funcname(b: &mut Bencher) {
-//                     let sv = Arc::new(SegQueue::<isize>::new());
-//                     b.iter(|| {
-//                         #[allow(clippy::needless_collect)]
-//                         let handles = (0..$threads)
-//                             .map(|_| {
-//                                 let data = Arc::clone(&sv);
-//                                 thread::spawn(move || {
-//                                     for i in 0..1000 {
-//                                         data.push(i);
-//                                     }
-//                                 })
-//                             })
-//                             .collect::<Vec<JoinHandle<()>>>();
-//                         handles.into_iter().for_each(|h| h.join().unwrap());
-//                     });
-//                 }
-//                         )*
-//         };
-//     }
-
-//     macro_rules! unlocked {
-//         ($($funcname:ident: $threads:expr),*) => {
-//             $(
-//                 #[bench]
-//                 fn $funcname(b: &mut Bencher) {
-//                     let sv = Arc::new(SecVec::<isize>::new());
-//                     sv.reserve(1000 * $threads);
-//                     b.iter(|| {
-//                         #[allow(clippy::needless_collect)]
-//                         let handles = (0..$threads)
-//                             .map(|_| {
-//                                 let data = Arc::clone(&sv);
-//                                 thread::spawn(move || {
-//                                     for i in 0..1000 {
-//                                         data.push(i);
-//                                     }
-//                                 })
-//                             })
-//                             .collect::<Vec<JoinHandle<()>>>();
-//                         handles.into_iter().for_each(|h| h.join().unwrap());
-//                     });
-//                 }
-//                         )*
-//         };
-//     }
-
-//     macro_rules! mutex {
-//         ($($funcname:ident: $threads:expr),*) => {
-//             $(
-//                 #[bench]
-//                 fn $funcname(b: &mut Bencher) {
-//                     let sv = Arc::new(Mutex::new(Vec::<isize>::with_capacity(1000 * $threads)));
-//                     b.iter(|| {
-//                         #[allow(clippy::needless_collect)]
-//                         let handles = (0..$threads)
-//                             .map(|_| {
-//                                 let data = Arc::clone(&sv);
-//                                 thread::spawn(move || {
-//                                     for i in 0..1000 {
-//                                         let mut g = data.lock().unwrap();
-//                                         g.push(i);
-//                                     }
-//                                 })
-//                             })
-//                             .collect::<Vec<JoinHandle<()>>>();
-//                         handles.into_iter().for_each(|h| h.join().unwrap());
-//                     });
-//                 }
-//                         )*
-//         };
-//     }
-//     unlocked!(unlocked1: 1, unlocked2: 2, unlocked3: 3, unlocked4: 4, unlocked5: 5, unlocked6: 6);
-//     mutex!(mutex1: 1, mutex2: 2, mutex3: 3, mutex4: 4, mutex5: 5, mutex6: 6, mutex: 20);
-//     queue!(q1: 1, q2: 2, q3: 3, q4: 4, q5: 5);
-// }
