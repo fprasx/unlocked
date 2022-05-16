@@ -69,23 +69,24 @@ steps:
    change, our new `Descriptor` will replace it. If it did change, we will fail
    to swap in our new `Descriptor`, and we go back to Step 1.
 
-   > Note: I think it's important to consider why this routine (particularly
-   > step 6) ensures correctness. If the `compare_exchange` succeeds, this means
-   > that the vector did not change in the time it took us to prepare a new
-   > `Descriptor`. Why is this important? It means our assumptions about the
-   > vector's state **did not change**. In our new `Descriptor`, we used the
-   > size from the `Descriptor` we loaded in, and incremented that by one. So,
-   > if the size we loaded in was `4`, our new `Descriptor` would say the size
-   > of the vector is `5`. Now, imagine that we could just swap in our fresh
-   > `Descriptor` without comparing it with the current one. If someone else was
-   > also trying to `push`, their `Descriptor` might get swapped in before ours.
-   > It would say the size of the vector is `5`, because it made the same
-   > assumptions we did. Then we swap in our `Descriptor`, our `Descriptor`
-   > would maintain that the size of the vector is `5`, even though it should be
-   > `6` because there were two `push` operations. Furthermore, we would
-   > overwrite the element that was `push`ed on by the first call to push,
-   > because both our `WriteDescriptor`s would be referencing the same location
-   > in memory. This is terrible! `compare_exchange` is our friend.
+    > Note: I think it's important to consider why this routine (particularly
+    > step 6) ensures correctness. If the `compare_exchange` succeeds, this
+    > means that the vector did not change in the time it took us to prepare a
+    > new `Descriptor`. Why is this important? It means our assumptions about
+    > the vector's state **did not change**. In our new `Descriptor`, we used
+    > the size from the `Descriptor` we loaded in, and incremented that by one.
+    > So, if the size we loaded in was `4`, our new `Descriptor` would say the
+    > size of the vector is `5`. Now, imagine that we could just swap in our
+    > fresh `Descriptor` without comparing it with the current one. If someone
+    > else was also trying to `push`, their `Descriptor` might get swapped in
+    > before ours. It would say the size of the vector is `5`, because it made
+    > the same assumptions we did. Then we swap in our `Descriptor`, our
+    > `Descriptor` would maintain that the size of the vector is `5`, even
+    > though it should be `6` because there were two `push` operations.
+    > Furthermore, we would overwrite the element that was `push`ed on by the
+    > first call to push, because both our `WriteDescriptor`s would be
+    > referencing the same location in memory. This is terrible!
+    > `compare_exchange` is our friend.
 
 8. Now that we have swapped in our `Descriptor`, we execute the
    `WriteDescriptor` we made using `complete_write`, finalizing the changes we
@@ -97,7 +98,10 @@ And that's a `push`!
 into that when we implement `push`/`pop`. However, the way we make sure changes
 are valid using `compare_exchange` is identical for both operations.
 
-Memory operations also need synchronization, but it's much less complicated. For
-that reason, let's start looking at the code for allocating memory.
+I think it's finally time to start looking at some code. When I was writing
+code, it felt very different from reasoning about the theory. I really felt like
+I had to consider every line I wrote and decision I made. I'll now walk you
+through what I came up with.
 
- > Note: we're going to first write a version of the vector that doesn't reclaim memory; it _leaks_.
+> Note: we're going to first write a version of the vector that doesn't reclaim
+> memory; it _leaks_.

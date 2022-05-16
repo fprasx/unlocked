@@ -1,3 +1,4 @@
 {
-	"cSpell.enableFiletypes": ["!rust"]
+	"cSpell.enableFiletypes": ["!rust"],
+	"cSpell.words": ["deallocate", "Nomicon", "repr", "usize"]
 }
