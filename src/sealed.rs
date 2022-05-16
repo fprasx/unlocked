@@ -36,13 +36,11 @@ pub struct SecVec<'a, T: Sized + Copy + Send + Sync> {
     _marker: PhantomData<T>, // Data is stored as transmuted T's
 }
 
-#[derive(Debug)]
 pub struct Descriptor<'a, T: Sized + Send> {
     pending: HazAtomicPtr<Option<WriteDescriptor<'a, T>>>,
     size: usize,
 }
 
-#[derive(Debug, Clone, Copy)]
 pub struct WriteDescriptor<'a, T: Sized> {
     new: u64,
     old: u64,
@@ -171,7 +169,7 @@ where
     fn complete_write(&self, pending: *mut Option<WriteDescriptor<T>>) {
         // If cas of actual value fails, someone else did the write
         // Result of cmpxchng doesn matter
-        if let Some(writedesc) = unsafe { *pending } {
+        if let Some(writedesc) = unsafe { &*pending } {
             let _ = AtomicU64::compare_exchange(
                 writedesc.location,
                 writedesc.old,
