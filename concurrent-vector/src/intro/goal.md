@@ -32,14 +32,19 @@ show you a interesting area of computer science and a beautiful language!
 
 ## Necessary Experience
 
-### tl;dr there isn't really any, but prior knowledge is helpful
+### tl;dr it's good to know some Rust
 
 It will be helpful to be familiar with Rust or another language like C and C++,
-as we will be dealing with low-level constructs like pointers, CPU instructions,
-and memory management. **However**, even if you are only familiar with `Some(_)`
-or `None` of these things, I believe you will be able to learn an interesting
-thing or two. I also hope I can introduce you to some cool concurrency concepts.
+as we will be dealing with low-level constructs like pointers, atomics, and
+memory management. **However**, even if you are only familiar with `Some(_)` or
+`None` of these things, I believe you will be able to learn an interesting thing
+or two.
 
-Of course, the code will be in Rust, so prior knowledge will be helpful.
-However, I will comment the code well and explain everything that is going on
-with text.
+Of course, the code will be in Rust, so prior knowledge will be helpful. I'm not
+going to spend time explaining syntax. However, I will comment the code well and
+explain what is going on. I think if you're comfortable with the first 15
+chapters of [The Book](https://doc.rust-lang.org/book/), you should be fine.
+Even if not, as long as you understand most of Rust syntax and are fine with
+looking something up everyonce in a while, you'll be fine.
+[Chapter 16](https://doc.rust-lang.org/book/ch16-00-concurrency.html) is very
+helpful though as it's the chapter on concurrency.

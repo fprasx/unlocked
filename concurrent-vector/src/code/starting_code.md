@@ -7,6 +7,7 @@ general API and implementation details of the vector. The pseudocode is a
 conversion of the paper's pseudocode into a more (in my opinion) understandable
 form. It completely ignores memory reclamation.
 
+You don't need to read this entire thing, it's just here as a reference.
 
 ```python
 # Calculate the index of the correct bucket

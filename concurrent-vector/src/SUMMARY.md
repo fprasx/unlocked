@@ -12,8 +12,8 @@
     - [Compare-and-Swap](./atomics/cas.md)
 - [Introduction to the Paper](./paper/intro.md)
     - [Structure: Memory](./paper/structure_memory.md)
-    - [The Algorithm](./paper/algorithm.md)
     - [Structure: Synchronization](./paper/structure_sync.md)
+    - [The Algorithm](./paper/algorithm.md)
 - [Starting Code](./code/starting_code.md)
 - [Memory Allocation](./code/alloc/alloc.md)
 

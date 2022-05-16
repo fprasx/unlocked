@@ -18,7 +18,7 @@ The vector is, broadly, a two-level array.
   |   |   |   |   |
   v   v   v   v   v
 +---+---+---+---+---+
-| 1 | 2 | 3 | 4 | 5 | Lower-level, notice these arrays are represented vertically
+| 1 | 2 | 3 | 4 | 5 | Lower-level, notice: these arrays are represented vertically
 +---+---+---+---+---+
     | 2 | 3 | 4 | 5 |
     +---+---+---+---+

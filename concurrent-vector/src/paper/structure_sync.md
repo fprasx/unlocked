@@ -16,6 +16,27 @@ The WriteDescriptor holds three values: the location of the write (a
 pointer-like object), an old value, and a new value. You might be wondering why
 a `WriteDescriptor` holds an old value. The answer: `compare_exchange`.
 
+Now that we've seen the `Descriptor` and `WriteDescriptor`, here's a quick
+summary of the vector structure:
+
+<!-- prettier-ignore-start -->
+```yaml
+# Data Organization
+Vector: 
+    [Pointer -> Memory],
+    Pointer -> Descriptor
+
+Descriptor: 
+    Pointer -> Possible WriteDescriptor, 
+    Size
+
+WriteDescriptor: 
+    Pointer -> Element location, 
+    New Element, 
+    Old Element
+```
+<!-- prettier-ignore-end -->
+
 ## How does this actually help with synchronization?
 
 > The major challenges of providing lock-free vector implementation stem from
@@ -52,24 +73,3 @@ which says that the size is now one bigger and points to a new `WriteDescriptor`
 representing a `push` operation. Because it swapped in a `Descriptor`, it has to
 complete the operation specified in the current `WriteDescriptor`, and the
 original pop returns `3`, as it should.
-
-
-**Summary of the vector's structure**:
-
-<!-- prettier-ignore-start -->
-```yaml
-# Data Organization
-Vector: 
-    [Pointer -> Memory],
-    Pointer -> Descriptor
-
-Descriptor: 
-    Pointer -> Possible WriteDescriptor, 
-    Size
-
-WriteDescriptor: 
-    Pointer -> Element location, 
-    New Element, 
-    Old Element
-```
-<!-- prettier-ignore-end -->
