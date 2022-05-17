@@ -6,14 +6,14 @@ type is the `struct`. A `struct` just sticks its members' data next to each
 other in memory. Here is the vector itself, as a struct:
 
 ```rust
-pub struct SecVec<'a, T: Sized + Copy + Send + Sync> {
+pub struct SecVec<'a, T: Sized + Copy> {
     buffers: CachePadded<Box<[AtomicPtr<AtomicU64>; 60]>>,
     descriptor: CachePadded<AtomicPtr<Descriptor<'a, T>>>,
     _marker: PhantomData<T>, // Data is stored as transmuted T's
 }
 ```
 
-## Cache money
+## Cache
 
 There is a lot to unpack here. Firstly, `CachePadded` is a `struct` provided by
 the crate `crossbeam_utils` crate.
@@ -82,7 +82,7 @@ that 😅
 ### The Descriptor and WriteDescriptor
 
 ```rust
-pub struct Descriptor<'a, T: Sized + Send> {
+pub struct Descriptor<'a, T: Sized> {
     pending: AtomicPtr<Option<WriteDescriptor<'a, T>>>,
     size: usize,
 }
@@ -96,3 +96,13 @@ pub struct WriteDescriptor<'a, T: Sized> {
 ```
 
 ## The trait bounds
+
+Notice how T is `Sized`, this means that its size is always known at
+compile-time. We need to ensure this because our values need to be transmutable.
+Part of the safety contract of `transmute_copy` is making sure our types are of
+compatible sizes.
+
+The `Copy` bound is necessary because the data in the vector is copied in and
+out of the buffers, with `transmute_copy`.
+
+OK, enough talk about `struct`s, let's get to the first function: `get()`

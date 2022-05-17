@@ -463,7 +463,7 @@ where
     }
 }
 
-impl<'a, T> Drop for SecVec<'_, T>
+impl<T> Drop for SecVec<'_, T>
 where
     T: Copy + Send + Sync,
 {
@@ -505,7 +505,7 @@ where
     }
 }
 
-impl<'a, T> Drop for Descriptor<'_, T>
+impl<T> Drop for Descriptor<'_, T>
 where
     T: Send,
 {
