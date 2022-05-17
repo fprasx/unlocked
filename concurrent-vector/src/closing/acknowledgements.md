@@ -1,8 +1,10 @@
 # Acknowledgements
-* Mr. McG
+
+- Mr. McG
 
 ## Inspired by
-* Jon Gjenset
-* fasterthanlime
+
+- Jon Gjenset
+- fasterthanlime
 
 ## Sources

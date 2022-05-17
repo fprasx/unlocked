@@ -25,7 +25,7 @@ great youtube video on Atomics, which sections on each ordering:
 The first ordering is `Relaxed`. This provides no guarantees on Ordering, simply
 that loads/stores are concurrent. The classic use case (I think this use case is
 classic at least, I always see it used in examples) of the `Relaxed` ordering is
-incrememting/decrementing a counter. We don't really care about observing the of
+incrementing/decrementing a counter. We don't really care about observing the of
 the counter; we just want to make sure our updates happen. When we finally load
 the counter, we can use an ordering with stronger guarantees.
 
@@ -62,7 +62,7 @@ STORE (Relaxed)      --              |
 LOAD a different variable (Relaxed) --
 ```
 
-Anything we do while "holding the lock", cannot get reorderd before "taking the
+Anything we do while "holding the lock", cannot get reordered before "taking the
 lock".
 
 Note: Although the lock metaphor is helpful for understanding `Acquire` and
@@ -79,6 +79,18 @@ seen this Ordering used.
 
 ## SeqCst (Sequentially Consistent)
 
-The `SeqCst` ordering makes has the same reordering effects of `AcqRel`, and also establishes a consistent modification order accross all threads. Two stores tagged `Relaxed` might show up in different orders to different threads. However, if they are both tagged `SeqCst`, they will show up in the same order to all threads. `SeqCst` is the strongest ordering, and thus also the safest (see Jon Gjenset's video for weird things that can happen). This comes at a price though, with the compiler often having to emit _memory fences_[^1] to guarantee sequential consistency. This can affect performance.
+The `SeqCst` ordering makes has the same reordering effects of `AcqRel`, and
+also establishes a consistent modification order across all threads. Two stores
+tagged `Relaxed` might show up in different orders to different threads.
+However, if they are both tagged `SeqCst`, they will show up in the same order
+to all threads. `SeqCst` is the strongest ordering, and thus also the safest
+(see Jon Gjenset's video for weird things that can happen with weaker
+orderings). Safety comes at a price though, with the compiler often having to
+emit _memory fences_[^1] to guarantee sequential consistency. This can affect
+performance.
 
-[^1] A memory fence prevents the CPU from reordering operations in certain ways. This is a great [article](https://preshing.com/20120710/memory-barriers-are-like-source-control-operations/) which describes many different types of fences, kind of like the different Atomic orderings, which restrict the compiler instead of the CPU.
+[^1] A memory fence prevents the CPU from reordering operations in certain ways.
+This is a great
+[article](https://preshing.com/20120710/memory-barriers-are-like-source-control-operations/)
+which describes many different types of fences, kind of like the different
+Atomic orderings, which restrict the compiler instead of the CPU.

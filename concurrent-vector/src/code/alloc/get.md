@@ -1,4 +1,4 @@
-# Getting a pointer into the buffers
+# `get()`
 
 The first, and simplest function to write is `vector.get(i)`, which returns a
 pointer to the element at index _i_.
@@ -40,15 +40,30 @@ unsafe fn get(&self, i: usize) -> *const AtomicU64 {
     // Offset the pointer to return a pointer to the correct element
     unsafe {
         // # Safety
-        // We know that we can offset the pointer because we will have allocated a bucket
-        // to store the value. Since we only call values that are `self.descriptor.size` or smaller,
-        // we know the offset will not go out of bounds because of the assert.
+        // We know that we can offset the pointer because we will have allocated a
+        // bucket to store the value. Since we only call values that are
+        // `self.descriptor.size` or smaller, we know the offset will not go out of
+        // bounds because of the assert.
         buffer.load(Ordering::Acquire).add(offset)
     }
 }
 ```
 
+## A few points to note
+
 Noticed how I've marked the function as `unsafe`. This is because there is a
-safety contrac the compiler can't enforce: the index must be valid. This is
+safety contract the compiler can't enforce: the index must be valid. This is
 automatically guaranteed through the usage of the function in the algorithm, but
 I marked it `unsafe` just to be explicit.
+
+The function is pretty straightforward: we calculate which buffer the item is
+in, load the pointer to the start of the buffer, and offset it to the correct
+element. There are two things I want to point out. First, notice all the checks
+we make to avoid overflow. Secondly, notice the use of `Ordering::Acquire` for
+loading in the pointer to the buffer. Since we always store the pointer with
+`Ordering::Release`, we are guaranteed to get the most recent pointer, because
+an `Acquire` load cannot get ordered before a `Release` store! I find it very
+satisfying how `Acquire` and `Release` work together. It's like two puzzle
+pieces fitting nicely into each other
+
+## What are all these bitwise operations?
