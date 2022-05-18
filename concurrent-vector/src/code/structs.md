@@ -27,7 +27,10 @@ the crate `crossbeam_utils` crate.
 > in the same cache line, one thread modifying its value marks the cache line as
 > "dirty". Even though the other thread's value hasn't been changed, the cache
 > coherency protocol might cause the thread to reload the entire line when it
-> uses the value, incurring some overhead. As the saying goes, cache is king.
+> uses the value, incurring some overhead. This can cause severe performance
+> degradation. Cache is a really important consideration when data structures. It's
+> why linked lists are algorithmically fine but terribly slow in practice. As
+> the saying goes, cache is king.
 
 The `CachePadded` `struct` aligns its contents to the beginning of the cache
 line to prevent false sharing. If all `CachePadded` objects are at the beginning

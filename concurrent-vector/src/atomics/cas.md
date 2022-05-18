@@ -43,4 +43,11 @@ focus on this intuition: _if CAS succeeds, loosely, we can say the state during
 the swap was the same as the state we observed when preparing for the swap._ Our
 assumptions were consistent throughout the whole process.
 
-**Note**: for the rest of the book, I'm going to refer to compare-and-swap as `compare_exchange`, as that is what the Rust Standard Library uses.
+The `compare_exchange` function in the Rust Standard Library returns a
+`Result<T, T>`, where T is the type being exchanged. The contents of the result
+is the value that the variable actually was. If `compare_exchange` fails, it
+returns `Err(actual_value)`, on success, it returns `Ok(expected_value)` (if it
+succeeded, that means `actual_value == expected_value`).
+
+**Note**: for the rest of the book, I'm going to refer to compare-and-swap as
+`compare_exchange`, as that is what the Rust Standard Library uses.

@@ -17,8 +17,8 @@
   - [The Algorithm](./paper/algorithm.md)
 - [Starting Code](./code/starting_code.md)
 - [Memory Allocation](./code/structs.md)
-
   - [get](./code/alloc/get.md)
-
+  - [allocate_bucket](./code/alloc/allocate_bucket.md)
+  - [reserve](./code/alloc/reserve.md)
 - [Acknowledgements](./closing/acknowledgements.md)
 - [Helpful Resources](./closing/resources.md)

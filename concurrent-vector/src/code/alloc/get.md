@@ -67,3 +67,8 @@ satisfying how `Acquire` and `Release` work together. It's like two puzzle
 pieces fitting nicely into each other
 
 ## What are all these bitwise operations?
+
+TODO
+
+Next up is the `allocate_bucket`.
+

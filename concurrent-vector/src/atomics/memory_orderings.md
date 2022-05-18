@@ -38,10 +38,10 @@ this, use these changes." More specifically, when you store with release, all
 changes to the variable are ordered before any `Acquire` loads.
 
 ```
-STORE (Relaxed) --
-STORE (Release)  | // "Release the lock"
-LOAD (Acquire)   |
-    X          <-- // nope
+STORE (Relaxed) ─┐
+STORE (Release)  │ // "Release the lock"
+LOAD (Acquire)   │
+    X          <─┘ // nope
 ```
 
 The compiler can't reorder the `Relaxed` store after the `Release` store,
@@ -55,11 +55,11 @@ When you load with `Acquire`, no reads or writes get reordered before that load.
 Anything that happens after "taking the lock" stays after the "lock was taken"
 
 ```
-    X                              <-| // nope
-    X               <-|              | // nope
-LOAD (Acquire)        |              | // "Take the lock"
-STORE (Relaxed)      --              |
-LOAD a different variable (Relaxed) --
+    X                              <─┐ // nope
+    X               <─┐              │ // nope
+LOAD (Acquire)        │              │ // "Take the lock"
+STORE (Relaxed)      ─┘              │
+LOAD a different variable (Relaxed) ─┘
 ```
 
 Anything we do while "holding the lock", cannot get reordered before "taking the
@@ -67,6 +67,9 @@ lock".
 
 Note: Although the lock metaphor is helpful for understanding `Acquire` and
 `Release`, remember there are no actual locks involved.
+
+> How is synchronization achieved? You see, when two `Ordering`s love each other
+> very much . . .
 
 ## AcqRel (Acquire _and_ Release)
 
