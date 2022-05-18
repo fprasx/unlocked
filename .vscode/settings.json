@@ -6,6 +6,7 @@
 		"intrinsics",
 		"Miri",
 		"Nomicon",
+		"reorderings",
 		"repr",
 		"Uninit",
 		"usize"

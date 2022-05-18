@@ -11,9 +11,17 @@ example, it might have an older (stale) copy of the variable cached.
 To ensure that our programs run the way we want, we need to specify more
 explicitly which values in the modification history the CPU is allowed to use.
 
-An _Ordering_ is a parameter you provide when
-loading/storing/doing-anything-else with atomic variables that specifies these
-constraints.
+Another problem is the CPU reordering instructions. The Golden Rule of
+instruction reordering is that reordering cannot change the effects of the
+program from the perspective of the thread. That is, the running thread, _not_
+other threads. The CPU might not think it's doing anything wrong moving some
+instructions around. And from the perspective of the thread it's executing,
+everything will seem alright. Other threads might be receiving crazy results
+though.
+
+An _Ordering_ is a parameter you provide to operations with atomic variables
+that specifies which reorderings can happen and which values in the modification
+history the CPU can use.
 
 I'm not going to go super in-depth into the intricacies of each ordering, but I
 will explain the important parts of each. If you're curious, Jon Gjenset has a
@@ -69,7 +77,36 @@ Note: Although the lock metaphor is helpful for understanding `Acquire` and
 `Release`, remember there are no actual locks involved.
 
 > How is synchronization achieved? You see, when two `Ordering`s love each other
-> very much . . .
+> very much . . . we get `Acquire-Release` semantics. Watch what happens when we
+> use `Acquire` and `Release` together (diagram inspired by
+> [this blog post](https://preshing.com/20120913/acquire-and-release-semantics/)):
+>
+> <!-- prettier-ignore-start -->
+>
+> ```
+> └───┘ Release store
+>
+>   | Read most recent data because the load is Acquire and the store is Release
+>   V
+>
+> ┌───┐ Acquire load
+> Memory operations cannot go above
+>
+>
+> Memory operations cannot go below
+> └───┘ Release store
+>
+>   | Read most recent data because the load is Acquire and the store is Release
+>   V
+>
+> ┌───┐ Acquire load
+> ```
+>
+> <!-- prettier-ignore-end -->
+>
+> All operations are trapped in their own sections, and each section gets the
+> most recent modifications because of the way `Acquire` loads and `Release`
+> stores synchronize!
 
 ## AcqRel (Acquire _and_ Release)
 

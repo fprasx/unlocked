@@ -158,7 +158,7 @@ The last function in the "memory" section is `reserve()`
 
 ---
 
-### Complete `allocate_bucket()`
+### Complete source for `allocate_bucket()`
 
 ```rust
 fn allocate_bucket(&self, bucket: usize) {

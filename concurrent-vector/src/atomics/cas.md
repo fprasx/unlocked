@@ -1,4 +1,4 @@
-# Compare-and-Swap (also know as CAS and Compare-Exchange)
+# Compare-and-Swap (also known as CAS and Compare-Exchange)
 
 Definition: swap a value with a new value _only if the the current value is what
 we think it is._
@@ -49,5 +49,7 @@ is the value that the variable actually was. If `compare_exchange` fails, it
 returns `Err(actual_value)`, on success, it returns `Ok(expected_value)` (if it
 succeeded, that means `actual_value == expected_value`).
 
-**Note**: for the rest of the book, I'm going to refer to compare-and-swap as
-`compare_exchange`, as that is what the Rust Standard Library uses.
+**Note**: for the rest of the book, I'm going to refer to `compare-and-swap` as
+`compare_exchange`, as that is what the Rust Standard Library uses. I used
+`compare-and-swap` on this page because it's very explicit about what the
+operation does.
