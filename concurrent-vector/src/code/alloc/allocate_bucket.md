@@ -40,6 +40,8 @@ a `Layout`, which describes the allocation we want. The
 > You can learn a lot from reading the Standard Library code.
 
 ```rust
+const FIRST_BUCKET_SIZE: usize = 8;
+
 fn allocate_bucket(&self, bucket: usize) {
     // The shift-left is equivalent to raising 2 to the power of bucket
     let size = FIRST_BUCKET_SIZE * (1 << bucket);

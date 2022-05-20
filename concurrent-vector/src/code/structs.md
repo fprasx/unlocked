@@ -9,9 +9,17 @@ other in memory. Here is the vector itself, as a struct:
 pub struct SecVec<'a, T: Sized + Copy> {
     buffers: CachePadded<Box<[AtomicPtr<AtomicU64>; 60]>>,
     descriptor: CachePadded<AtomicPtr<Descriptor<'a, T>>>,
-    _marker: PhantomData<T>, // Data is stored as transmuted T's
+    _boo: PhantomData<T>, // Data is stored as transmuted T's
 }
 ```
+
+## Boo! 👻
+
+I bet the PhantomData scared you. We have a generic parameter T, but we have no
+`struct` members of `SecVec` of either of the descriptors that actually contains
+a T (because we transmute T into `u64`s). Therefore, to let the compiler know we
+really are carrying T's, we add a little ghost that tells it, "Here is a Phantom
+T that we're carrying."
 
 ## Cache
 
@@ -28,9 +36,9 @@ the crate `crossbeam_utils` crate.
 > "dirty". Even though the other thread's value hasn't been changed, the cache
 > coherency protocol might cause the thread to reload the entire line when it
 > uses the value, incurring some overhead. This can cause severe performance
-> degradation. Cache is a really important consideration when data structures. It's
-> why linked lists are algorithmically fine but terribly slow in practice. As
-> the saying goes, cache is king.
+> degradation. Cache is a really important consideration when data structures.
+> It's why linked lists are algorithmically fine but terribly slow in practice.
+> As the saying goes, cache is king.
 
 The `CachePadded` `struct` aligns its contents to the beginning of the cache
 line to prevent false sharing. If all `CachePadded` objects are at the beginning
