@@ -2,8 +2,13 @@
 	"cSpell.enableFiletypes": ["!rust"],
 	"cSpell.words": [
 		"alloc",
+		"allocs",
+		"backoff",
 		"deallocate",
+		"Dechev",
+		"Gjengset",
 		"intrinsics",
+		"mircobenchmarks",
 		"Miri",
 		"Nomicon",
 		"reorderings",
