@@ -79,7 +79,7 @@ pub struct SecVec<'a, T: Sized> {
     buffers: CachePadded<Box<[AtomicPtr<AtomicU64>; 60]>>,
     descriptor: CachePadded<AtomicPtr<Descriptor<'a, T>>>,
     // The data is technically stored as usizes, but it's really just transmuted T's
-    _marker: PhantomData<T>,
+    _boo: PhantomData<T>,
 }
 
 /// TODO: add docs
@@ -97,7 +97,7 @@ struct WriteDescriptor<'a, T: Sized> {
     new: u64,
     old: u64,
     location: &'a AtomicU64,
-    _marker: PhantomData<T>,
+    _boo: PhantomData<T>,
 }
 
 impl<'a, T> Descriptor<'a, T> {
@@ -124,7 +124,7 @@ impl<'a, T> WriteDescriptor<'a, T> {
             new,
             old,
             location,
-            _marker: PhantomData::<T>,
+            _boo: PhantomData::<T>,
         }
     }
 
@@ -149,7 +149,7 @@ where
         Self {
             descriptor: CachePadded::new(AtomicPtr::new(descriptor)),
             buffers: CachePadded::new(buffers),
-            _marker: PhantomData,
+            _boo: PhantomData,
         }
     }
 

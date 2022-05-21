@@ -17,7 +17,7 @@ use haphazard;
 // Setting up hazard pointers
 // This makes sure they all use the same Domain, guaranteeing the protection is valid.
 #[non_exhaustive]
-pub struct Family;
+struct Family;
 type Domain = haphazard::Domain<Family>;
 type HazardPointer<'domain> = haphazard::HazardPointer<'domain, Family>;
 type HazAtomicPtr<T> = haphazard::AtomicPtr<T, Family>;
@@ -32,20 +32,20 @@ pub const ATOMIC_NULLPTR: AtomicPtr<AtomicU64> = AtomicPtr::new(ptr::null_mut::<
 pub struct SecVec<'a, T: Sized + Copy + Send + Sync> {
     buffers: CachePadded<Box<[AtomicPtr<AtomicU64>; 60]>>,
     descriptor: CachePadded<HazAtomicPtr<Descriptor<'a, T>>>,
-    pub domain: Domain,
-    _marker: PhantomData<T>, // Data is stored as transmuted T's
+    domain: Domain,
+    _boo: PhantomData<T>, // Data is stored as transmuted T's
 }
 
-pub struct Descriptor<'a, T: Sized + Send> {
+struct Descriptor<'a, T: Sized + Send> {
     pending: HazAtomicPtr<Option<WriteDescriptor<'a, T>>>,
     size: usize,
 }
 
-pub struct WriteDescriptor<'a, T: Sized> {
+struct WriteDescriptor<'a, T: Sized> {
     new: u64,
     old: u64,
     location: &'a AtomicU64,
-    _marker: PhantomData<T>, // New and old are transmuted T's
+    _boo: PhantomData<T>, // New and old are transmuted T's
 
 }
 
@@ -76,7 +76,7 @@ impl<'a, T> WriteDescriptor<'a, T> {
             new,
             old,
             location,
-            _marker: PhantomData::<T>,
+            _boo: PhantomData::<T>,
         }
     }
 
@@ -97,7 +97,7 @@ where
         f.debug_struct("SecVec")
             .field("buffers", &self.buffers)
             .field("descriptor", &self.descriptor)
-            .field("PhantomData", &self._marker)
+            .field("PhantomData", &self._boo)
             .finish()
     }
 }
@@ -119,7 +119,7 @@ where
             descriptor: CachePadded::new(unsafe { haphazard::AtomicPtr::new(descriptor) }),
             buffers: CachePadded::new(buffers),
             domain,
-            _marker: PhantomData,
+            _boo: PhantomData,
         }
     }
 
