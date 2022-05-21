@@ -71,7 +71,7 @@ of the program.
 
 We can't just differectly free the memory though, as there could be another
 thread reading it. Later on, I'm going to show you how we can use a data
-structure called _hazard pointers_ to safely reclaim objects. 
+structure called _hazard pointers_ to safely reclaim objects.
 
 For now, the vector will stay leaky, and we'll move on the `push`.
 

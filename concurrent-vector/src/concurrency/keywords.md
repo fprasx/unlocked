@@ -9,6 +9,7 @@
 - null pointer
 - heap
 - stack (see the rust book)
+
 # Thread
 
 # Mutex

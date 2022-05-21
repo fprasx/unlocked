@@ -71,4 +71,3 @@ pieces fitting nicely into each other
 TODO
 
 Next up is the `allocate_bucket`.
-

@@ -50,6 +50,7 @@ together to make the vector.
 The constructors for the descriptor types end in `as_ptr` because they actually
 return a raw pointer pointing to a heap allocation containing the value. We
 achieve this by making a `Box` and then extracting the inner raw pointer.
+
 ```
 let b = Box::(5);
 let b_ptr = Box::into_raw(b); <- That's a raw pointer to heap memory!

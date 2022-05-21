@@ -25,5 +25,7 @@
   - [push](./code/ops/push.md)
   - [pop](./code/ops/pop.md)
   - [size](./code/ops/size.md)
+  - [tests](./code/ops/tests.md)
+- [Memory Reclamation](./code/hazptr.md)
 - [Acknowledgements](./closing/acknowledgements.md)
 - [Helpful Resources](./closing/resources.md)

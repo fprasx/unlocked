@@ -533,14 +533,14 @@ mod tests {
         }
     }
 
-    #[cfg(not(miri))] // Too slow
-    #[test]
-    #[should_panic] // The allocation is too large
-                    // This will cause a sigabrt because the computer will oom
-    fn reserve_usize_max() {
-        let sv = SecVec::<isize>::new();
-        sv.reserve(usize::MAX)
-    }
+    // #[cfg(not(miri))] // Too slow
+    // #[test]
+    // #[should_panic] // The allocation is too large
+    //                 // This will cause a sigabrt because the computer will oom
+    // fn reserve_usize_max() {
+    //     let sv = SecVec::<isize>::new();
+    //     sv.reserve(usize::MAX)
+    // }
 }
 #[cfg(not(miri))] // Too slow
 #[cfg(test)]

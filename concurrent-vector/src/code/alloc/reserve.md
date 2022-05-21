@@ -65,7 +65,9 @@ manage the vector's memory. Now's time for the really hard part: actually implem
 the vector's functions.
 
 ---
+
 ### Complete source for `reserve()`
+
 ```rust
 pub fn reserve(&self, size: usize) {
     // Cache the size to prevent another atomic op from due to calling `size()` again

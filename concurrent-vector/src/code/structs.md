@@ -15,8 +15,8 @@ pub struct SecVec<'a, T: Sized + Copy> {
 
 ## Boo! 👻
 
-I bet the PhantomData scared you. We have a generic parameter T, but we have no
-`struct` members of `SecVec` of either of the descriptors that actually contains
+I bet the PhantomData scared you. We have a generic parameter `T`, but we have no
+`struct` members of `SecVec` or either of the descriptors that actually contains
 a T (because we transmute T into `u64`s). Therefore, to let the compiler know we
 really are carrying T's, we add a little ghost that tells it, "Here is a Phantom
 T that we're carrying."
