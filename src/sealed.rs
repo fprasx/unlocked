@@ -507,15 +507,16 @@ where
 impl<T> Drop for Descriptor<'_, T>
 {
     fn drop(&mut self) {
-        // TODO: safety comment
-        // Must ensure ref to wdesc never outlasts ref to desc
+        // # Safety
+        // The pointer is valid because it's from Box::into_raw
+        // We must also ensure ref to wdesc never outlasts ref to desc
         unsafe {
             Box::from_raw(
                 self.pending
                     .swap_ptr(ptr::null_mut())
                     .unwrap()
                     .into_inner()
-                    .as_ptr(),
+                    .as_ptr()
             );
         }
     }

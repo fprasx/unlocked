@@ -30,6 +30,7 @@
   - [Hazard Pointers](./code/reclaim/hazptr.md)
   - [Fixing complete_write](./code/reclaim/complete_write.md)
   - [Fixing push & pop](./code/reclaim/push_pop.md)
+  - [Dropping the vector](./code/reclaim/vector_drop.md)
   - [More tests](./code/reclaim/tests.md)
 - [Reflections](./reflections/reflection.md)
 - [Acknowledgements](./closing/acknowledgements.md)
