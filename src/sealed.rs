@@ -29,14 +29,14 @@ pub const FIRST_BUCKET_SIZE: usize = 8;
 #[allow(clippy::declare_interior_mutable_const)]
 pub const ATOMIC_NULLPTR: AtomicPtr<AtomicU64> = AtomicPtr::new(ptr::null_mut::<AtomicU64>());
 
-pub struct SecVec<'a, T: Sized + Copy + Send + Sync> {
+pub struct SecVec<'a, T: Sized + Copy> {
     buffers: CachePadded<Box<[AtomicPtr<AtomicU64>; 60]>>,
     descriptor: CachePadded<HazAtomicPtr<Descriptor<'a, T>>>,
     domain: Domain,
     _boo: PhantomData<T>, // Data is stored as transmuted T's
 }
 
-struct Descriptor<'a, T: Sized + Send> {
+struct Descriptor<'a, T: Sized> {
     pending: HazAtomicPtr<Option<WriteDescriptor<'a, T>>>,
     size: usize,
 }
@@ -46,7 +46,6 @@ struct WriteDescriptor<'a, T: Sized> {
     old: u64,
     location: &'a AtomicU64,
     _boo: PhantomData<T>, // New and old are transmuted T's
-
 }
 
 impl<'a, T> Descriptor<'a, T>
@@ -465,7 +464,7 @@ where
 
 impl<T> Drop for SecVec<'_, T>
 where
-    T: Copy + Send + Sync,
+    T: Copy,
 {
     fn drop(&mut self) {
         // Drop buffers
@@ -506,8 +505,6 @@ where
 }
 
 impl<T> Drop for Descriptor<'_, T>
-where
-    T: Send,
 {
     fn drop(&mut self) {
         // TODO: safety comment
