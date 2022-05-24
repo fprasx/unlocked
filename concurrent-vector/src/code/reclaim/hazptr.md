@@ -9,7 +9,7 @@ think this is what `haphazard`
 Whenever we want to access a pointer, we access it through a _hazard pointer_.
 When we access through a hazard pointer, the address we are accessing gets added
 to the list of addresses to protect. When the hazard pointer get's dropped, or
-we explicity dissasociate the hazard pointer from the underlying raw pointer,
+we explicitly disassociate the hazard pointer from the underlying raw pointer,
 the protection ends.
 
 So why is this list important? When we are done with an object, we _retire_ it.
@@ -89,5 +89,66 @@ The `Domain` sees that `0x22` is retired and no one is protecting it, so it
 deallocates the allocation at `0x22`. We have reclaimed memory, and `0x22` will
 not leak!
 
+## Code changes
+
 To use the hazard pointers, we're going to need to make a small change in the
 vector's structure.
+
+The hardest part was getting started.
+
+Following the documentation on
+[`Domain`](https://docs.rs/haphazard/latest/haphazard/struct.Domain.html), I
+wrote a bunch of type `alias`es using the `type` keyword:
+
+```rust
+// Setting up hazard pointers
+// This makes sure they all use the same Domain, guaranteeing the protection is valid.
+#[non_exhaustive]
+struct Family;
+type Domain = haphazard::Domain<Family>;
+type HazardPointer<'domain> = haphazard::HazardPointer<'domain, Family>;
+type HazAtomicPtr<T> = haphazard::AtomicPtr<T, Family>;
+```
+
+This makes sure that we only uses `Domain`s produced from struct `Family`. This
+prevents us from retiring a pointer in the `Global` domain that is being guarded
+in a different domain. The `Global` domain can't see the other `Domain`'s
+protected list, so might prematurely retire the pointer.
+
+Secondly, all the `HazardPointer`s and `HazAtomicPtr`s we construct will be in
+same family as our `Domain`s. This ensures the same protection against
+overlapping with the `Global` domain.
+
+> The difference between `HazAtomicPtr` which is an an alias for
+> `haphazard::AtomicPtr`, and `std::sync::atomic::AtomicPtr`, is that
+> `HazAtomicPtr` uses hazard pointers to guard loads. Additionally, all atomic
+> operations with `HazAtomicPtr` have `Acquire-Release` semantics built in.
+> Nifty!
+
+To ensure that we always retire and protect in the same domain, we will also
+carry a `Domain` in the `struct` itself. Then, it's pretty easy to just always
+use `&self.domain` whenever we need a domain. All we have to do is add one more
+`struct` field to `SecVec`:
+
+```rust
+pub struct SecVec<'a, T: Sized + Copy> {
+    buffers: CachePadded<Box<[AtomicPtr<AtomicU64>; 60]>>,
+    descriptor: CachePadded<HazAtomicPtr<Descriptor<'a, T>>>,
+    domain: Domain, // Hi there :)
+    _boo: PhantomData<T>,
+}
+
+struct Descriptor<'a, T: Sized> {
+    pending: HazAtomicPtr<Option<WriteDescriptor<'a, T>>>,
+    size: usize,
+}
+
+struct WriteDescriptor<'a, T: Sized> {
+    new: u64,
+    old: u64,
+    location: &'a AtomicU64,
+    _boo: PhantomData<T>,
+}
+```
+
+And with that out of the way, we can now plug some leaks!

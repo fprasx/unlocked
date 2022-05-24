@@ -218,7 +218,7 @@ minor differences in `pop`, and then we'll cap off the code with `size`.
 
 ---
 
-# Complete source for `push`
+### Complete source for `push`
 
 ```rust
 pub fn push(&self, elem: T) {

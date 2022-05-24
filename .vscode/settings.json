@@ -5,6 +5,8 @@
 		"allocs",
 		"backoff",
 		"deallocate",
+		"deallocated",
+		"deallocates",
 		"Dechev",
 		"Gjengset",
 		"hazptr",
@@ -16,6 +18,7 @@
 		"reorderings",
 		"repr",
 		"Uninit",
-		"usize"
+		"usize",
+		"writedesc"
 	]
 }

@@ -47,9 +47,9 @@ changes to the variable are ordered before any `Acquire` loads.
 
 ```
 STORE (Relaxed) ─┐
-STORE (Release)  │ // "Release the lock"
+STORE (Release) -+-// "Release the lock"
 LOAD (Acquire)   │
-    X          <─┘ // nope
+    X          <─┘ // nope, can't reorder Release store after Acquire load
 ```
 
 The compiler can't reorder the `Relaxed` store after the `Release` store,
@@ -63,9 +63,9 @@ When you load with `Acquire`, no reads or writes get reordered before that load.
 Anything that happens after "taking the lock" stays after the "lock was taken"
 
 ```
-    X                              <─┐ // nope
-    X               <─┐              │ // nope
-LOAD (Acquire)        │              │ // "Take the lock"
+    X                              <─┐ // nope, can't reorder store before Acquire load
+    X               <─┐              │ // nope, can't reorder load before Acquire load
+LOAD (Acquire) -------+--------------+-// "Take the lock"
 STORE (Relaxed)      ─┘              │
 LOAD a different variable (Relaxed) ─┘
 ```
