@@ -1,8 +1,8 @@
 # `complete_write()`
 
-I think `complete_write` is the first function I wrote for the vector. We
-execute the `WriteDescriptor` passed in and set the one stored in the vector to
-`None`
+I think `complete_write` is the first function I wrote for the vector's core
+operations. We execute the `WriteDescriptor` passed in and set the one stored in
+the vector to `None`
 
 Here's what the function signature looks like:
 
@@ -65,9 +65,9 @@ that all subsequent `Acquire` loads will see it.
 Leaking memory is when you use memory but never free it. This is the first
 chunck of code that leaks. Our `Descriptor` has a pointer to an
 `Option<WriteDescriptor>`. When we store a different pointer, we lose the old
-pointer forever. Since we never do anything to deallocate the memory pointed to by the
-old pointer, like `Box::from_raw`, that memory will stay allocated until the end
-of the program.
+pointer forever. Since we never do anything to deallocate the memory pointed to
+by the old pointer, like `Box::from_raw`, that memory will stay allocated until
+the end of the program.
 
 We can't just differectly free the memory though, as there could be another
 thread reading it. Later on, I'm going to show you how we can use a data

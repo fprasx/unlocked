@@ -18,11 +18,14 @@ const ATOMIC_NULLPTR: AtomicPtr<AtomicU64>
 pub fn new() -> Self {
     // Make an array of 60 AtomicPtr<Atomicu64> set to the null pointer
     let buffers = Box::new([ATOMIC_NULLPTR; 60]);
+
     // Make a new WriteDescriptor
     let pending = WriteDescriptor::<T>::new_none_as_ptr();
+
     // Make a new descriptor
     let descriptor = Descriptor::<T>::new_as_ptr(pending, 0, 0);
-    // Return self!
+
+    // Return self
     Self {
         descriptor: CachePadded::new(AtomicPtr::new(descriptor)),
         buffers: CachePadded::new(buffers),
@@ -43,8 +46,8 @@ large! With a `Box`, we only store 8 bytes for the first level in our two-level
 array.
 
 Then, we make a `WriteDescriptor` using `new_none_as_ptr()`, which returns an
-`Option<WriteDescriptor<T>>`. We pass this into the constructor (`new_as_ptr`) for
-`Descriptor<T>`, and then assemble the `Descriptor` and the `Box`ed array
+`Option<WriteDescriptor<T>>`. We pass this into the constructor (`new_as_ptr`)
+for `Descriptor<T>`, and then assemble the `Descriptor` and the `Box`ed array
 together to make the vector.
 
 The constructors for the descriptor types end in `as_ptr` because they actually
@@ -56,6 +59,75 @@ let b = Box::(5);
 let b_ptr = Box::into_raw(b); <- That's a raw pointer to heap memory!
 ```
 
-## The Heap and the Stack
+## My first UB mistake
 
-TODO: my first UB mistake
+I introduced the heap and the stack earlier in the keywords section, but I
+didn't explain why the distinction is important.
+
+When a function is called, a _stack frame_ is pushed onto the stack. This stack
+frame contains all the function's local variables. When the function returns,
+the stack frame is popped off the stack, and all local variables are destroyed.
+This would also invalidate all references to local variables.
+
+The heap is different. You allocate on the heap, and you deallocate on the heap.
+Nothing happens automatically. This is the legendary `malloc/free` combo from
+`C`.
+
+Understanding the distinction between the stack and the heap is important
+because we are using raw pointers, which don't have the guarantees of
+references.
+
+Here is my first mistake, summarized a little:
+
+```rust
+use core::sync::atomic::{Ordering, AtomicPtr};
+
+fn main() {
+    let ptr = new_descriptor();
+    let d = unsafe { &*ptr.load(Ordering::Acquire) };
+}
+
+fn new_descriptor() -> AtomicPtr<Descriptor> {
+    let d = Descriptor { size: 0, write: None };
+    AtomicPtr::new(&d as *const _ as *mut _)
+}
+
+struct Descriptor {
+    size: usize,
+    write: Option<bool>
+}
+
+```
+
+```
+$ cargo miri run
+```
+
+```
+error: Undefined Behavior: pointer to alloc1184 was dereferenced after this allocation got freed
+  --> src\main.rs:46:22
+   |
+46 |     let d = unsafe { &*ptr.load(Ordering::Acquire) };
+   |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ pointer to alloc1184 was dereferenced after this allocation got freed
+   |
+   = help: this indicates a bug in the program: it performed an invalid operation, and caused Undefined Behavior
+```
+
+`Miri` says
+`pointer to alloc1184 was dereferenced after this allocation got freed`.
+Translation: `use-after-free`; classic UB.
+
+So why is the `Descriptor`'s allocation being freed? Because it's **allocated on
+the stack**. When `new_descriptor` returns, the local variable `d: Descriptor`
+get's destroyed, and the pointer we made from the reference is invalidated.
+Thus, the `use-after-free` when we deference a freed allocation.
+
+This is the danger of using raw pointers. With references, Rust will keep the
+value alive until there are no references to it and it's safe to drop at the end
+of a scope.
+
+This example also highlights why only dereferencing a raw pointer is `unsafe`.
+It's perfectly safe to make one, but we have no guarantees about what it's
+pointing to, and that's why the dereference is `unsafe`.
+
+Thank you `Miri`!
