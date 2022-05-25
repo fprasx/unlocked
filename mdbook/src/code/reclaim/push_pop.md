@@ -17,7 +17,7 @@ the `WriteDescriptor` after `complete_write` is. Since the `Descriptor` is the
 result of a swap, we are the only thread who will retire it. The thing is, if we
 also retire the `WriteDescriptor`, a thread who is already accessing the
 `Descriptor` could make a _new_ load to the just retired `WriteDescriptor`,
-violating the safety contract of `reitre_in`, and causing UB.
+violating the safety contract of `retire_in`, and causing UB.
 
 ## The problem in picture form
 
@@ -100,7 +100,7 @@ like:
 ```
 
 This means that when there are no people accessing a `Descriptor`, there are
-also no people accessing the innter `WriteDescriptor`. Therefore, when a
+also no people accessing the inner `WriteDescriptor`. Therefore, when a
 `Descriptor` is `retired`ed, the `WriteDescriptor` is also safe to `retire`
 because there are no references to it. Since no one can get a new reference to a
 `retire`ed `Descriptor`, no once can access the inner `WriteDescriptor`.
@@ -108,11 +108,11 @@ because there are no references to it. Since no one can get a new reference to a
 Why is this important? Whenever we reclaim a `Descriptor`, we also reclaim the
 inner `WriteDescriptor`, fixing our leaks without causing any UB.
 
-To implement this custom behaviour for `Descriptor`, we implement the `Drop`
-trait. A trait that implements `Drop` executes some custom behaviour when it
+To implement this custom behavior for `Descriptor`, we implement the `Drop`
+trait. A trait that implements `Drop` executes some custom behavior when it
 goes out of scope and is reclaimed.
 
-The `Drop` implemenation looks like this:
+The `Drop` implementation looks like this:
 
 ```rust
 impl<T> Drop for Descriptor<'_, T>
@@ -145,7 +145,7 @@ Its time to finally go over the code changes to `push`. All access to the
 returns a reference to the `Descriptor`/`WriteDescriptor`, which is valid as
 long as the hazard pointer guarding the access is alive. Access to the inner
 `WriteDescriptor` is explicitly scoped within its own block to make clear that
-access to the `WriteDescriptor` cannot oulive access to the parent `Descriptor`.
+access to the `WriteDescriptor` cannot outlive access to the parent `Descriptor`.
 
 ```rust
 pub fn push(&self, elem: T) {
@@ -189,7 +189,7 @@ This stuff is all the same as before.
             // The `transmute_copy` is safe because we have ensured that T is the
             // correct size at compile time
             unsafe { mem::transmute_copy::<T, u64>(&elem) },
-            // Load from the AtomicU64, which really containes the bytes for T
+            // Load from the AtomicU64, which really contains the bytes for T
             last_elem.load(Ordering::Acquire),
             last_elem,
         );
@@ -300,7 +300,7 @@ pub fn push(&self, elem: T) {
             // The `transmute_copy` is safe because we have ensured that T is
             // the correct size at compile time
             unsafe { mem::transmute_copy::<T, u64>(&elem) },
-            // Load from the AtomicU64, which really containes the bytes for T
+            // Load from the AtomicU64, which really contains the bytes for T
             last_elem.load(Ordering::Acquire),
             last_elem,
         );
@@ -373,7 +373,7 @@ pub fn pop(&self) -> Option<T> {
         }
 
         // TODO: add safety comment
-        // Consider if new desc is swapped in, can we read dealloced memory?
+        // Consider if new desc is swapped in, can we read deallocated memory?
         // Do not need to worry about underflow for the sub because we would
         // have already returned
         let elem = unsafe { &*self.get(current_desc.size - 1) }

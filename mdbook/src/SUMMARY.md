@@ -33,5 +33,6 @@
   - [Dropping the vector](./code/reclaim/vector_drop.md)
   - [More tests](./code/reclaim/tests.md)
 - [Reflections](./reflections/reflection.md)
+  - [Potential Optimizations](./reflections/optimize.md)
 - [Acknowledgements](./closing/acknowledgements.md)
 - [Helpful Resources](./closing/resources.md)

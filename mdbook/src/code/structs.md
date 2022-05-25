@@ -15,30 +15,31 @@ pub struct SecVec<'a, T: Sized + Copy> {
 
 ## Boo! 👻
 
-I bet the PhantomData scared you. We have a generic parameter `T`, but we have no
-`struct` members of `SecVec` or either of the descriptors that actually contains
-a T (because we transmute T into `u64`s). Therefore, to let the compiler know we
-really are carrying T's, we add a little ghost that tells it, "Here is a Phantom
-T that we're carrying."
+I bet the `PhantomData` scared you. We have a generic parameter `T`, but we have
+no `struct` members of `SecVec` or either of the descriptors that actually
+contains a `T` (because we transmute `T` into `u64`s). Therefore, to let the
+compiler know we really are carrying `T`'s, we add a little ghost that tells it,
+"We're carrying this Phantom `T` _wink_ "
 
-## Cache
+## Sharing is caring
 
 There is a lot to unpack here. Firstly, `CachePadded` is a `struct` provided by
-the crate `crossbeam_utils` crate.
+the `crossbeam_utils` crate.
 
-> A note on cache: you may have heard of CPU cache, a small buffer of memory
+> **A note on cache**: you may have heard of CPU cache, a small buffer of memory
 > stored on the CPU to allow for fast access. The `cache` in `CachePadded`
 > actually refers to a buffer between main RAM and the CPU's. It's just a larger
 > and slower cache compared to a CPU cache. The cache is split into contiguous
 > blocks of memory called _cache lines_. This is the most granular level at
 > which cache coherency is maintained. When multiple threads both have a value
-> in the same cache line, one thread modifying its value marks the cache line as
-> "dirty". Even though the other thread's value hasn't been changed, the cache
-> coherency protocol might cause the thread to reload the entire line when it
-> uses the value, incurring some overhead. This can cause severe performance
-> degradation. Cache is a really important consideration when data structures.
-> It's why linked lists are algorithmically fine but terribly slow in practice.
-> As the saying goes, cache is king.
+> in the same cache line, one thread modifying the value it owns marks the
+> _entire_ cache line as "dirty". Even though the other thread's value hasn't
+> been changed, the cache coherency protocol might cause the thread to reload
+> the entire line when it uses the value, incurring some overhead. This is
+> called _false sharing_, and cause severe performance degradation. Cache is an
+> extremely important consideration when data structures. It's why linked lists
+> are algorithmically fine but terribly slow in practice. As the saying goes,
+> cache is king.
 
 The `CachePadded` `struct` aligns its contents to the beginning of the cache
 line to prevent false sharing. If all `CachePadded` objects are at the beginning
@@ -61,7 +62,7 @@ v                    v                    v
  \                    \
   \                    \
    \                    \
-    Different cache lines
+    Different cache lines -> no false sharing
 ```
 
 ## Two-level array
@@ -73,7 +74,12 @@ for valid pointers once they need to point to an actual array.
 
 The `AtomicPtr`s point to `AtomicU64`s because each element is going to get
 transmuted into a `u64` so that we can atomically perform writes on the vector.
-When returning an element, we'll transmute it back into a T.
+When returning an element, we'll transmute it back into a T. _Transmuting_ means
+interpreting the bits of one type as the bits of another.
+
+For example, `0b10100001` means `-95` when interpreted as a signed integer but
+`161` when interpreted as an unsigned integer. Transmuting one to the other
+would just change how we interpret the bits, not tha actual bits themselves.
 
 ## Descriptors galore
 
@@ -86,6 +92,20 @@ modifying a buffer. Since a buffer can't necessarily be modified atomically or
 without locking, what we can do is prepare a buffer and then change a pointer so
 that it points to our new buffer. All new readers will see the new data when
 they dereference the pointer.
+
+```
+                 Pointer
+                 /     \
+                /       \
+           +---+        +----+
+          /                   \ 
+         /         ->          \
+        v                       v
+       Old                      New
++---+---+---+---+        +---+---+---+---+
+| 9 | 9 | 9 | 9 |        | 6 | 6 | 6 | 6 |
++---+---+---+---+        +---+---+---+---+
+```
 
 What do we do with the old pointer you might ask? Worry not, we will get into
 that 😅

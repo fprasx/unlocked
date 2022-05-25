@@ -525,7 +525,11 @@ impl<T> Drop for Descriptor<'_, T>
 #[cfg(test)]
 mod tests {
     use super::*;
-
+    extern crate std;
+use std::sync::atomic::{AtomicIsize, Ordering};
+use std::sync::Arc;
+use std::thread::{self, JoinHandle};
+use std::vec::Vec;
     #[test]
     fn size_starts_at_0() {
         let sv = SecVec::<usize>::new();
@@ -555,6 +559,41 @@ mod tests {
         for buffer in &**sv.buffers {
             assert!(buffer.load(Ordering::Relaxed).is_null())
         }
+    }
+
+    #[test]
+    fn the_big_multithread() {
+        static FIVE: isize = 5;
+        let data = Arc::new(SecVec::<isize>::new());
+        data.reserve(100 * 5);
+        let sum = Arc::new(AtomicIsize::new(0));
+        #[allow(clippy::needless_collect)]
+        let handles = (0..5)
+            .map(|_| {
+                let data = Arc::clone(&data);
+                thread::spawn(move || {
+                    for _ in 0..100 {
+                        data.push(FIVE);
+                    }
+                })
+            })
+            .into_iter()
+            .collect::<Vec<JoinHandle<_>>>();
+        handles.into_iter().for_each(|h| h.join().unwrap());
+        #[allow(clippy::needless_collect)]
+        let handles = (0..5)
+            .map(|_| {
+                let data = Arc::clone(&data);
+                let sum = Arc::clone(&sum);
+                thread::spawn(move || {
+                    for _ in 0..100 {
+                        sum.fetch_add(data.pop().unwrap_or(0), Ordering::Relaxed);
+                    }
+                })
+            })
+            .into_iter()
+            .collect::<Vec<JoinHandle<_>>>();
+        handles.into_iter().for_each(|h| h.join().unwrap());
     }
 
     #[cfg(not(miri))] // Too slow

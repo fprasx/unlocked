@@ -51,23 +51,24 @@ unsafe fn get(&self, i: usize) -> *const AtomicU64 {
 
 ## A few points to note
 
-Noticed how I've marked the function as `unsafe`. This is because there is a
+Notice how I've marked the function as `unsafe`. This is because there is a
 safety contract the compiler can't enforce: the index must be valid. This is
 automatically guaranteed through the usage of the function in the algorithm, but
 I marked it `unsafe` just to be explicit.
 
-The function is pretty straightforward: we calculate which buffer the item is
-in, load the pointer to the start of the buffer, and offset it to the correct
-element. There are two things I want to point out. First, notice all the checks
-we make to avoid overflow. Secondly, notice the use of `Ordering::Acquire` for
-loading in the pointer to the buffer. Since we always store the pointer with
-`Ordering::Release`, we are guaranteed to get the most recent pointer, because
-an `Acquire` load cannot get ordered before a `Release` store! I find it very
-satisfying how `Acquire` and `Release` work together. It's like two puzzle
-pieces fitting nicely into each other
+Summarizing what the function does, we calculate which buffer the item is in,
+load the pointer to the start of the buffer, and offset it to the correct
+element. There are two other things I want to point out. First, notice all the
+checks we make to avoid overflow. Secondly, notice the use of `Acquire` for
+loading in the pointer to the buffer. Since the store part of the
+`compare_exchange(AcqRel)` we use to set the pointer to the buffer is `Release`,
+we are guaranteed to get the most recent pointer, because an `Acquire` load sees
+the contents `Release`ed by a `Release` store! I find it very satisfying how
+`Acquire` and `Release` work together. It's like two puzzle pieces fitting
+nicely into each other
 
 ## What are all these bitwise operations?
 
-TODO
+I'm honestly not sure. That's why they wrote the paper and I didn't `:)`.
 
 Next up is the `allocate_bucket`.

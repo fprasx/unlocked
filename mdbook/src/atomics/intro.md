@@ -10,7 +10,7 @@ Suppose each box represents a byte (8 bits):
 
 ```
 
-˅    Load 1             ˅
+v    Load 1             v
 +-----+-----+-----+-----+-----+-----+-----+-----+
 |     |     |     |     |     |     |     |     |
 +-----+-----+-----+-----+-----+-----+-----+-----+
@@ -27,8 +27,8 @@ non-atomic operations, loads and scores might end up overlapping, resulting in
 _torn_ reads and writes.
 
 For example, on our hypothetical 32-bit machine, one core might finish the first
-write to the 32-bit value, another core then might before the two loads needed
+write to the 32-bit value, another core then might perform the two loads needed
 to load the value, and then the first core might finish the storing the last 32
 bits. Now, one core has a value that is half gibberish!
 
-This is an example of a data race, and could result in undefined behavior.
+This is an example of a data race, an example of undefined behavior.
