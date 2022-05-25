@@ -10,7 +10,7 @@ when we do a write, the increase in size is reflected in the vector's state
 before the write actually happens. If there is still a `WriteDescriptor`
 contained in the `Descriptor`, that means the size stored in the `Descriptor` is
 one greater than the actual size of the vector, because `complete_write`
-replaces the `WriteDescriptor` with `None`.
+replaces the `WriteDescriptor` with `None` when it executes the write.
 
 Here is the code:
 
@@ -36,6 +36,8 @@ pub fn size(&self) -> usize {
 
 There have been many momentous moments throughout the book: understanding the
 algorithm, finishing `push`, and finally, completing the vector's public API.
-When I was writing the code, this moment felt huge, and I jumped up and down after `push`ing 10 elements onto the vector, `pop`ing 10 times, and running `assert_eq!(sv.size(), 0);`
+When I was writing the code, this moment felt huge, and I jumped up and down
+after `push`ing 10 elements onto the vector, `pop`ing 10 times, and running
+`assert_eq!(sv.size(), 0);` withough crashing.
 
 Let's run some tests (more fun than you might think)!

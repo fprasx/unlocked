@@ -1,10 +1,5 @@
 # Acknowledgements
 
-- Mr. McG
-
-## Inspired by
-
-- Jon Gjenset
-- fasterthanlime
+Thank you to my advisor and my friends for giving me feedback and supporting me.
 
 ## Sources

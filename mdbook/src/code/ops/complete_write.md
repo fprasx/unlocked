@@ -14,12 +14,13 @@ fn complete_write(&self, pending: &Option<WriteDescriptor<T>>) {
 The first thing we do is execute the `WriteDescriptor`, if there is one. We can
 use `if let` syntax to concisely express this. The result of the
 `compare_exchange` doesn't matter. If it succeeds, we performed the write. If it
-doesn't someone else performed it. Also, notice how we are `compare_exchange`ing
-an `AtomicU64`. The data is transmuted into those bytes, allowing us to make
-atomic modifications to the contents of the vector. Because the data needs to be
-transmuted into an atomic type, the vector can't support types larger than 8
-bytes. Finally, because we are using `AcqRel` as the success ordering, any
-subsequent `Acquire` loads will see the that there is no pending write.
+doesn't, someone else performed it. Also, notice how we are
+`compare_exchange`ing an `AtomicU64`. The data is transmuted into those bytes,
+allowing us to make atomic modifications to the contents of the vector. Because
+the data needs to be transmuted into an atomic type, the vector can't support
+types larger than 8 bytes. Finally, because we are using `AcqRel` as the success
+ordering, any subsequent `Acquire` loads will see the that there is no pending
+write.
 
 ```rust
     #[allow(unused_must_use)]
@@ -62,16 +63,16 @@ that all subsequent `Acquire` loads will see it.
 
 ## Leaking memory
 
-Leaking memory is when you use memory but never free it. This is the first
-chunck of code that leaks. Our `Descriptor` has a pointer to an
+Leaking memory is when you use memory (allocating) but never free it. This is
+the first chunk of code that leaks. Our `Descriptor` has a pointer to an
 `Option<WriteDescriptor>`. When we store a different pointer, we lose the old
 pointer forever. Since we never do anything to deallocate the memory pointed to
 by the old pointer, like `Box::from_raw`, that memory will stay allocated until
 the end of the program.
 
-We can't just differectly free the memory though, as there could be another
-thread reading it. Later on, I'm going to show you how we can use a data
-structure called _hazard pointers_ to safely reclaim objects.
+We can't just directly free the memory right away though, as there could be
+another thread reading it. Later on, I'm going to show you how we can use a
+technique called _hazard pointers_ to safely reclaim (deallocate) objects.
 
 For now, the vector will stay leaky, and we'll move on the `push`.
 

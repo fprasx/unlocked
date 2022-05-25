@@ -59,7 +59,7 @@ test leaky::tests::ten_push_ten_pop ... ok
 Although you can't see it, the green on those "ok"s warms my heart.
 
 We know the vector is leaky, but otherwise it shouldn't be doing any other funky
-things or UB. Let see if `Miri` finds anything with
+things or UB. Let's see if `Miri` finds anything with
 `MIRIFLAGS=-Zmiri-ignore-leaks cargo miri test -- leaky::tests`:
 
 ```

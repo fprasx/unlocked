@@ -2,8 +2,7 @@
 
 `complete_write` was the easiest leak to seal. When we swap out the
 `WriteDescriptor`, we get back the old one. All we have to do is retire it, and
-its memory will eventually get reclaimed. Using the `haphazard` crate did
-require some slight changes to code, which I'll point out.
+its memory will eventually get reclaimed.
 
 We execute the `WriteDescriptor` and make a new one (`None`) like normal:
 
@@ -26,12 +25,13 @@ fn complete_write(&self, pending: *mut Option<WriteDescriptor<T>>) {
 
 Here comes the part where the hazard pointers kick in. We make a hazard pointer
 in `&self.domain`, then load in the `Descriptor`. Now, the current `Descriptor`
-cannot get deallocated as long as our hazard pointer is alive. Then we swap in a
+cannot get reclaimed as long as our hazard pointer is alive. Then we swap in a
 new pointer to the `None` `WriteDescriptor`.
 
-Here comes the big change, instead of just doing nothing with the pointer, we
-`retire` it in `&self.domain`. According to the documentation for `retire_in`,
-there is a safety contract we need to follow (hence the marking `unsafe fn`).
+Here comes the big change, instead of just doing nothing with the pointer that
+swapped out, we `retire` it in `&self.domain`. According to the documentation
+for `retire_in`, there is a safety contract we need to follow (hence the marking
+`unsafe fn`).
 
 Let's look at that:
 
@@ -62,8 +62,8 @@ Finally, number 3, all operations (creating hazard pointers, retiring pointers)
 happen through `&self.domain`!
 
 After writing a 1000 word essay, we can confirm that `retire_in` is safe to
-call. This is the argument we'll use for `retire`ing the results of `compare_exchange` in
-`push`/`pop`.
+call. This is the argument we'll use for `retire`ing the results of
+`compare_exchange` in `push`/`pop`.
 
 ```rust
         let mut hp = HazardPointer::new_in_domain(&self.domain);
@@ -90,9 +90,11 @@ call. This is the argument we'll use for `retire`ing the results of `compare_exc
 }
 
 ```
+
 That's the only change to `complete_write`. `push`/`pop` aren't much worse.
 
 ---
+
 ### Complete source for `complete_write` (not leaky)
 
 ```rust

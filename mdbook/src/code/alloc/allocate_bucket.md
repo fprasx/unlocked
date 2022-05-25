@@ -29,15 +29,17 @@ array.
 There are two parts to `allocate_bucket`: allocating the memory and setting the
 pointer. We start off by tapping into the `alloc` crate's API. First, we create
 a `Layout`, which describes the allocation we want. The
-`Layout::array::<Atomic64>()` function indicates that we want an array of
-`AtomicU64` `size` long. If creating the layout fails (due to overflow), we call
-`capacity_overflow`, which just panics.
+`Layout::array::<Atomic64>()` indicates that we want a bunch of `AtomicU64`
+right next to each other in memory. If creating the layout fails (due to
+overflow), we call `capacity_overflow`, which just panics.
 
 > You might ask, why not just directly call `panic!`? Apparently, it reduces the
 > generated code size if we just have panic in one function, which we then call
 > from multiple places. I found this trick in the source code for
 > [`std::vec::Vec`](https://github.com/rust-lang/rust/blob/master/library/alloc/src/raw_vec.rs#L512-L518).
-> You can learn a lot from reading the Standard Library code.
+> You can learn a _lot_ from reading the Standard Library code. That's how I've
+> learned a lot of the low level stuff I know. It's also a good way to see what
+> good, idiomatic Rust looks like.
 
 ```rust
 const FIRST_BUCKET_SIZE: usize = 8;
@@ -52,7 +54,7 @@ fn allocate_bucket(&self, bucket: usize) {
 
 ```
 
-The next thing we do is just another check. The Standard Library does both and I
+The next thing we do is just another check. The Standard Library does both checks and I
 trust their
 [strategy](https://github.com/rust-lang/rust/blob/master/library/alloc/src/raw_vec.rs#L176-L183).
 
@@ -83,7 +85,7 @@ worth it to do some `MaybeUninit` magic, but honestly, I don't know if there'll
 be much, if any, performance gains.
 
 Once again, we have more checks, and we'll just `panic!` if the allocation
-fails. `handle_alloc_error` is from the `alloc` crate.
+fails. `handle_alloc_error` is from the `alloc` crate:
 
 ```rust
 let allocator = Global;
@@ -131,9 +133,9 @@ care about the value `compare_exchange` returns.
 
 ## Success and Fail Orderings
 
-Like all atomic operations, `compare_exchange` uses the `Ordering`s. Most
+Like all atomic operations, `compare_exchange` uses the orderings. Most
 operations take 1, but this bad boy takes two. Since `compare_exchange` reads
-and writes a memory location, I'm using `Ordering::AcqRel`. Since we always use
+and writes a memory location, we're using `AcqRel`. Since we always use
 `AcqRel` for the buckets, the load part (`Acquire`) of the `compare_exchange`
 will always see the most recent value because the store part is `Release`. If we
 just used `Acquire`, the store part of the `compare_exchange` would be
@@ -147,7 +149,7 @@ need to establish any synchronization if the operation fails. It failed; we're
 not doing any stores. When I first saw this, I had the question, "Why do we
 provide different success and fail orderings if the `compare_exchange` doesn't
 know if it will fail or not?" The answer, thanks to Alice on the Rust User
-Forums, is that compiler picks an ordering that will always satisfy the stronger
+Forums, is that the compiler picks an ordering that will always satisfy the stronger
 ordering. Thus, `compare_exchange(success: AcqRel, fail: Release)` executes as
 `compare_exchange(success: AcqRel, fail: Acquire)` to ensure that the initial
 load is `Acquire` for both cases.
@@ -156,7 +158,7 @@ There's a little more to it; if you're still curious, see this
 [thread](https://users.rust-lang.org/t/what-does-the-compare-exchange-fail-ordering-mean/75791)
 on the Rust User Forums.
 
-The last function in the "memory" section is `reserve()`
+The last function in the "memory" section is `reserve()`, which I've "reserved" for last.
 
 ---
 

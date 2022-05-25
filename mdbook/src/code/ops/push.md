@@ -9,7 +9,7 @@ We're going to track the steps described in
 the concurrent semantics of the vector during implementation. The first thing we
 do is load in the `Descriptor` and `WriteDescriptor`. This is actually harder
 than it might seem, as we're working with `unsafe` things like raw pointers. We
-need to be very careful. But wait, there's one more thing I want to cover, and
+need to be very careful. But wait, there's one more thing we should cover, and
 that's _exponential backoff_!
 
 ## Exponential Backoff
@@ -18,14 +18,16 @@ Exponential backoff is another one of those techniques that's unique to
 concurrent programming. `compare_exchange` algorithms like the one we're
 implementing can produce a lot of contention over a couple specific memory
 locations. For example, may threads are trying to `compare_exchange` the
-`AtomicPtr<Descriptor<T>>` stored in the vector. That spot in memory is
-constantly bombarded with heavy atomic operations. One way we can alleviate this
-is by waiting a little bit after failing to `compare_exchange`. The first time
-we fail, we back off for `1` tick. If we fail again, we back off for `2` ticks,
-then `4`, `8` . . . this is why the _backoff_ is _exponential_. In some
-mircobenchmarks I did, introducing exponential backoff greatly speeded up the
-vector. `crossbeam_utils` has a useful little `struct` call `Backoff` that we're
-going to use. Ok, back to the code.
+`AtomicPtr<Descriptor>` stored in the vector. That spot in memory is constantly
+bombarded with heavy atomic operations. One way we can alleviate this is by
+waiting a little bit after failing to `compare_exchange`. The first time we
+fail, we back off for `1` tick. If we fail again, we back off for `2` ticks,
+then `4`, `8` . . . this is why the _backoff_ is _exponential_. By backing off,
+we give another thread some room to successfully perform their
+`compare_exchange`. In some mircobenchmarks I did, introducing exponential
+backoff greatly speeded up the vector. It's cool that going slower at a micro
+level allows us to go faster on a macro level. `crossbeam_utils` has a useful
+little `struct` called `Backoff` that we're going to use.
 
 ```rust
 pub fn push(&self, elem: T) {
@@ -44,7 +46,7 @@ pub fn push(&self, elem: T) {
 There is already a lot going on here, in just these 10ish lines of code.
 Firstly, we've instantiated a `Backoff`. A the bottom of the loop, if we failed
 to `compare_exchange` in our new `Descriptor`, we'll call `Backoff::spin()` to
-wait a little bit, then we'll come back up to the top and try again.
+wait a little bit, then we'll come back up to the top of the loop and try again.
 
 This code also contains a very `unsafe` operation: dereferencing a raw pointer.
 The more I read about the dangers of raw pointers, the more scared I got.
@@ -55,9 +57,9 @@ non-null, don't implement cleanup (like `Box`), and ignore all the aliasing
 rules (`&/&mut` semantics).
 
 After watching
-[Demystifying `unsafe` code](https://www.youtube.com/watch?v=QAz-maaH0KM) by Jon
-Gjengset, I felt better. `unsafe` code isn't intrinsically bad, it is just code
-that comes with an extra contract that we must uphold and document.
+[Demystifying `unsafe` code](https://www.youtube.com/watch?v=QAz-maaH0KM) I felt
+better. `unsafe` code isn't intrinsically bad, it's just code that comes with an
+extra contract that we must uphold and document.
 
 In the case of these first raw pointer dereferences, we know the dereference is
 safe because the pointers to the `Descriptor` and `WriteDescriptor` come from
@@ -98,7 +100,7 @@ much as possible though, as we can slip up and violate contracts.
 > invariant that we use `Box::into_raw` pointers, the compiler/type system does
 > so for us.
 
-After loading in the `WriteDescriptor`, execute it if need be:
+After loading in the `WriteDescriptor`, we execute it if need be.
 
 ```rust
     self.complete_write(pending);
@@ -130,6 +132,7 @@ Let's make our new `WriteDescriptor` now:
     let last_elem = unsafe { &*self.get(current_desc.size) };
     let write_desc = WriteDescriptor::<T>::new_some_as_ptr(
         unsafe { mem::transmute_copy::<T, u64>(&elem) },
+        // Load from the AtomicU64, which really contains the bytes for T
         last_elem.load(Ordering::Acquire),
         last_elem,
     );
@@ -140,15 +143,15 @@ For now we are assuming that the vector is only storing values 8 bytes or
 smaller, therefore it is safe to `transmute_copy` to an `AtomicU64`. I plan on
 writing a macro that produces different implementations of the vector with
 different atomic types when storing types of different sizes. For example,
-`SecVec<(i8, i8)>` would store the data in `AtomicU16`.
+`SecVec<(i8, i8)>` would store the data in `AtomicU16`. This would save on
+space.
 
 Note that `last_elem`'s type is `&AtomicU64`; it's the location of the write.
 When we load from `last_elem`, we are getting the `old` element. We now have the
 three pieces of data necessary for `compare_exchange`: a memory location (the
-reference), an old element, and a new element (the `T` passed to this
-function).// Load from the AtomicU64, which really contains the bytes for T
+reference), an old element, and a new element (the `T` passed to this function).
 
-Let's put our package everything up in a `Descriptor` now:
+Let's package everything up in a `Descriptor`.
 
 ```rust
     let next_desc = Descriptor::<T>::new_as_ptr(write_desc, current_desc.size + 1);
@@ -187,8 +190,9 @@ Either way, **we have a memory leak**. If the `compare_exchange` succeeded, we
 never deal with the old `Descriptor`'s pointer. We can never safely deallocate
 it because we don't know if anyone is reading it. It would be terribly rude to
 pull the rug out from under them! Also the deallocation would probably cause a
-use-after-free which would cause the OS to terminate the program which would rip
-a hole in the space-time continuum which would. Wait what? Uhh, moving on . . .
+`use-after-free` which would cause the OS to terminate the program which would
+rip a hole in the space-time continuum which would. Wait what? Uhh, moving on .
+. .
 
 If the `compare_exchange` failed, the new `Descriptor` and `WriteDescriptor`
 leak. Once we reach the end of the loop, all local variables in that scope are
@@ -208,13 +212,13 @@ then retry:
 
 ```
 
-Once we finish loop and finally succeed with the `compare_exchange`, we're done!
-That's a `push`. The pseudocode is so simple, and the code is so . . . not
+Once we finish looping and finally succeed with the `compare_exchange`, we're
+done! That's a `push`. The pseudocode is so simple, and the code is so . . . not
 simple. Props to you for getting this far, concurrent programming is not for the
 weak of spirit.
 
-The rest of the book should be easier digest compared to _that_. I'll cover the
-minor differences in `pop`, and then we'll cap off the code with `size`.
+I'll cover the minor differences in `pop`, and then we'll cap off the leaky code
+with `size`.
 
 ---
 

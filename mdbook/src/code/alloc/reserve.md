@@ -1,10 +1,10 @@
 # `reserve()`
 
-The goal of `reserve(n)` is simple: allocate enough memory to perform n pushes
+The goal of `reserve(n)` is simple: allocate enough memory to perform `n` pushes
 without allocating more memory.
 
 This is a useful function, because, as we've seen, `allocate_bucket` requires
-some heavy atomics, like `compare_exchange`. If we can do our allocations in a
+some heavy atomics with `compare_exchange`. If we can do our allocations in a
 calmer scenario with less contention, we'll experience some performance gains.
 
 We start by calculating the number of allocations we'll need to perform to
@@ -12,8 +12,8 @@ reserve enough space. The calculation is a little funky, and there's an edge
 case where it can't distinguish between 0 and sizes between 1 and
 `FIRST_BUCKET_SIZE`. That's why we need to explicitly allocate the first bucket.
 We'll see the implementation of `size()` later, but it does use some atomic
-synchronization, so we just cache it the result so we don't have to keep
-incurring atomic overhead over and over.
+synchronization, so we just cache the result so we can keep using it later
+without calling `size` again.
 
 ```rust
 pub fn reserve(&self, size: usize) {
@@ -25,9 +25,9 @@ pub fn reserve(&self, size: usize) {
 
 ```
 
-Now, we calculate the number of allocations we've made:
+Now, we calculate the number of allocations we've made.
 
-The highest bit function returns the highest set bit in a number. A bit is set
+`highest_bit` returns the highest set bit in a number. A bit is set
 if it's equal to one. The highest set bit of 7 (`0b111`), for example, is 2
 (0-indexed). Since the buckets are increasing by a factor of two each time, the
 highest set bit of the indices in each bucket is one greater than the highest
@@ -61,8 +61,8 @@ for each allocation missing, we allocate.
 ```
 
 And that's it for memory. We can now do every thing we need to do to access and
-manage the vector's memory. Now's time for the really hard part: actually implementing
-the vector's functions.
+top up the vector's memory. Now's time for the really hard part: actually
+implementing the vector's functions.
 
 ---
 

@@ -11,8 +11,8 @@ size.
 
 ```
 
-The final difference is that after we do the `compare_exchange`, we read the
-last element and return it.
+The final difference is that after we succeed with the `compare_exchange`, we
+read the last element and return it.
 
 ```rust
     if AtomicPtr::compare_exchange_weak(
@@ -36,7 +36,8 @@ last element and return it.
 The rest of the function: loading the `Descriptors`, `compare_exchange`,
 `Backoff`, is identical.
 
-Like `push`, `pop` also leaks memory profusely. Luckily, this means that when we implement memory reclamation, it'll be the same for `push` and `pop`.
+Like `push`, `pop` also leaks memory profusely. Luckily, this means that when we
+implement memory reclamation, it'll be the same solution for `push` and `pop`.
 
 ---
 

@@ -122,7 +122,7 @@ pub struct WriteDescriptor<'a, T: Sized> {
     new: u64,
     old: u64,
     location: &'a AtomicU64,
-    _marker: PhantomData<T>, // New and old are transmuted T's
+    _boo: PhantomData<T>, // New and old are transmuted T's
 }
 ```
 

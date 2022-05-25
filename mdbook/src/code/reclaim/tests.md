@@ -1,8 +1,8 @@
 # More tests
 
 Here are the tests. I added a new one up at the top that spawns a bunch of
-threads which push and pop. I just want to make sure `Miri` does not detect any
-UB in a complex scenario like that
+threads which `push` and `pop`. I just want to make sure `Miri` does not detect
+any UB in a complex scenario like that
 
 ```rust
 #[cfg(test)]

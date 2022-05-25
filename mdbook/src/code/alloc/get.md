@@ -3,7 +3,7 @@
 The first, and simplest function to write is `vector.get(i)`, which returns a
 pointer to the element at index _i_.
 
-This is the code I wrote:
+Here is the code to that implements `get`.
 
 ```rust
 /// Return a *const T to the index specified
@@ -51,10 +51,10 @@ unsafe fn get(&self, i: usize) -> *const AtomicU64 {
 
 ## A few points to note
 
-Notice how I've marked the function as `unsafe`. This is because there is a
+Notice how the function is marked as `unsafe`. This is because there is a
 safety contract the compiler can't enforce: the index must be valid. This is
 automatically guaranteed through the usage of the function in the algorithm, but
-I marked it `unsafe` just to be explicit.
+it's worth it marking it `unsafe` just to be explicit.
 
 Summarizing what the function does, we calculate which buffer the item is in,
 load the pointer to the start of the buffer, and offset it to the correct
@@ -65,7 +65,7 @@ loading in the pointer to the buffer. Since the store part of the
 we are guaranteed to get the most recent pointer, because an `Acquire` load sees
 the contents `Release`ed by a `Release` store! I find it very satisfying how
 `Acquire` and `Release` work together. It's like two puzzle pieces fitting
-nicely into each other
+nicely into each other.
 
 ## What are all these bitwise operations?
 

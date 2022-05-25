@@ -10,7 +10,7 @@ Since it's been a little bit, here's what the vector look like in code form agai
 pub struct SecVec<'a, T: Sized + Copy> {
     buffers: CachePadded<Box<[AtomicPtr<AtomicU64>; 60]>>,
     descriptor: CachePadded<AtomicPtr<Descriptor<'a, T>>>,
-    _marker: PhantomData<T>, // Data is stored as transmuted T's
+    _boo: PhantomData<T>, // Data is stored as transmuted T's
 }
 
 struct Descriptor<'a, T: Sized> {
@@ -22,7 +22,7 @@ struct WriteDescriptor<'a, T: Sized> {
     new: u64,
     old: u64,
     location: &'a AtomicU64,
-    _marker: PhantomData<T>, // New and old are transmuted T's
+    _boo: PhantomData<T>, // New and old are transmuted T's
 }
 
 ```

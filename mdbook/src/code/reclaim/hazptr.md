@@ -1,33 +1,34 @@
 # Hazard Pointers
 
-The idea of hazard pointers is to _protect_ memory addresses from deallocation.
+The idea of hazard pointers is to _protect_ memory addresses from reclamation.
 At any moment in time, we have a list of addresses that are not safe to reclaim.
-We can store the addresses in a data structure like a concurrent linked lists; I
+We can store the addresses in a data structure like a concurrent linked list; I
 think this is what `haphazard`
 [uses](https://docs.rs/haphazard/latest/src/haphazard/domain.rs.html#759-768).
 
 Whenever we want to access a pointer, we access it through a _hazard pointer_.
-When we access through a hazard pointer, the address we are accessing gets added
-to the list of addresses to protect. When the hazard pointer get's dropped, or
-we explicitly disassociate the hazard pointer from the underlying raw pointer,
-the protection ends.
+Accessing through a hazard pointer adds the address we are accessing to the list
+of addresses to protect. When the hazard pointer gets dropped, or we explicitly
+disassociate the hazard pointer from the underlying raw pointer, the protection
+ends.
 
-So why is this list important? When we are done with an object, we _retire_ it.
-By retiring the pointer, we are agreeing to not use it anymore. Any thread that
-is already accessing it can continue to do so, but there can be not _new_
-readers/writers.
+So why is the `Protected` list important? When we are done with an object, we
+_retire_ it, marking it for eventual reclamation. By retiring the pointer, we
+agree to not use it anymore. Any thread that is already accessing it can
+continue to do so, but there can be no _new_ readers/writers.
 
-Every once in a while, the `Domain`, which holds the hazard pointers will go
-through the `Retired` list. For each pointer, the `Domain` checks whether that
-pointer is protected by reading the `Protected` list. If the pointer isn't
-protected, the `Domain` deallocates it. If it is protected, the `Domain` does
-not reclaim it, because someone is using it. In this way, we prevent pointers in
-use from being deallocated, but those out of use are deallocated.
+Every once in a while, the `Domain`, which holds the hazard pointers, will go
+through the `Retired` list. For each pointer on this list, the `Domain` checks
+whether the pointer is protected by reading the `Protected` list. If the pointer
+isn't protected, the `Domain` reclaims the object it points to (deallocating the
+pointer). If it is protected, the `Domain` does not reclaim it, because someone
+is using it. In this way, we prevent pointers in use from being deallocated, but
+those out of use are deallocated.
 
 ## An example
 
 Hazard pointers are pretty complicated, so here's a visual example that I hope
-helps.
+helps:
 
 ```
 Protected: [1<0x22>]
@@ -43,7 +44,7 @@ Right now Thread 1 is accessing `0x22` via a hazard pointer, so the `Protected`
 list contains the pointer `Ox22`, annotated with `1` to indicate Thread 1 is
 protecting it. I'm not sure if you would actually keep track of which thread is
 protecting a pointer in an actual implementation. I think if another thread
-tries to protect a pointer, if it's already protected, nothing will happen.
+tries to protect an already protected pointer, nothing will happen.
 
 Ok, now, Thread 2 accesses `0x22` and protects the pointer.
 
@@ -110,10 +111,10 @@ type HazardPointer<'domain> = haphazard::HazardPointer<'domain, Family>;
 type HazAtomicPtr<T> = haphazard::AtomicPtr<T, Family>;
 ```
 
-This makes sure that we only uses `Domain`s produced from struct `Family`. This
-prevents us from retiring a pointer in the `Global` domain that is being guarded
-in a different domain. The `Global` domain can't see the other `Domain`'s
-protected list, so might prematurely retire the pointer.
+We only use `Domain`s produced from struct `Family`. This prevents us from
+retiring a pointer in the `Global` domain that is being guarded in a different
+domain. The `Global` domain can't see the other `Domain`'s protected list, so
+might prematurely retire the pointer.
 
 Secondly, all the `HazardPointer`s and `HazAtomicPtr`s we construct will be in
 same family as our `Domain`s. This ensures the same protection against
@@ -127,7 +128,7 @@ overlapping with the `Global` domain.
 
 To ensure that we always retire and protect in the same domain, we will also
 carry a `Domain` in the `struct` itself. Then, it's pretty easy to just always
-use `&self.domain` whenever we need a domain. All we have to do is add one more
+use `&self.domain` whenever we need a `Domain`. All we have to do is add one more
 `struct` field to `SecVec`:
 
 ```rust

@@ -4,7 +4,7 @@ I know I said that the changes to `push` and `pop` aren't that bad, which is
 true. Getting to those changes however, took a while. I'm going to explain what
 I did with pseudocode first, and then show the final code.
 
-The first think I tried was just retiring the old `Descriptor` after a
+The first thing I tried was just retiring the old `Descriptor` after a
 successful `compare_exchange`, however, this didn't reduce the leakage at all
 for some reason. I figured it might be because the `Descriptor` was pointing a
 live `WriteDescriptor`. So then, I also retired the `WriteDescriptor`. However,
@@ -22,8 +22,8 @@ violating the safety contract of `retire_in`, and causing UB.
 ## The problem in picture form
 
 We, Thread 1, have the `Descriptor` as the result of a successful
-`compare_exchange`. Thread 2 is also reading the `Descriptor` (_but not the
-inner `WriteDescriptor`_)
+`compare_exchange`. Thread 2 is also reading the `Descriptor` (**but not the
+inner `WriteDescriptor`**)
 
 ```
                Thread 2
@@ -40,9 +40,10 @@ Thread 1 (us) /
         WriteDescriptor
 ```
 
-So, we `retire` the `Descriptor` and `WriteDescriptor`. The `Descriptor` is
-protected from reclamation because Thread 2 is reading it, but the
-`WriteDescriptor` has no readers so it gets deallocated.
+Because the `compare_exchange` was successful, we `retire` the `Descriptor` and
+`WriteDescriptor`. The `Descriptor` is protected from reclamation because Thread
+2 is reading it, but the `WriteDescriptor` has no readers so it gets
+deallocated.
 
 ```
                Thread 2
@@ -59,8 +60,8 @@ Thread 1 (us) /
         WriteDescriptor <Deallocated>
 ```
 
-Now, Thread 2 goes to read the (now deallocated!!) `WriteDescriptor` by loading
-the pointer through the `Descriptor` (which is still protected, and safe to
+Now, Thread 2 goes to read the (now reclaimed!!) `WriteDescriptor` by loading
+the pointer contained in the `Descriptor` (which is still protected, and safe to
 access).
 
 ```
@@ -109,8 +110,8 @@ Why is this important? Whenever we reclaim a `Descriptor`, we also reclaim the
 inner `WriteDescriptor`, fixing our leaks without causing any UB.
 
 To implement this custom behavior for `Descriptor`, we implement the `Drop`
-trait. A trait that implements `Drop` executes some custom behavior when it
-goes out of scope and is reclaimed.
+trait. A type that implements `Drop` executes some custom behavior when it goes
+out of scope and is reclaimed.
 
 The `Drop` implementation looks like this:
 
@@ -135,17 +136,18 @@ impl<T> Drop for Descriptor<'_, T>
 ```
 
 All we're doing is extracting the pointer to the `WriteDescriptor` and calling
-`Box::from_raw()` on it so that. When it goes out of scope (at the end of the
-function), its memory will be reclaimed by `Box`.
+`Box::from_raw` on it so that its memory will be reclaimed by `Box` when it
+goes out of scope.
 
 ## Reclaiming the `Descriptor`s
 
-Its time to finally go over the code changes to `push`. All access to the
+Its time to finally go over the code changes to `push`. All accesses to the
 `Descriptor` and `WriteDescriptor` are guarded with a hazard pointer. The access
 returns a reference to the `Descriptor`/`WriteDescriptor`, which is valid as
 long as the hazard pointer guarding the access is alive. Access to the inner
 `WriteDescriptor` is explicitly scoped within its own block to make clear that
-access to the `WriteDescriptor` cannot outlive access to the parent `Descriptor`.
+access to the `WriteDescriptor` cannot outlive the access to the parent
+`Descriptor`.
 
 ```rust
 pub fn push(&self, elem: T) {
@@ -200,9 +202,9 @@ This stuff is all the same as before.
 ```
 
 The `compare_exchange` syntax is slightly different, but it's doing the exact
-same thing. We don't have to specify `Ordering`s because it's built in by the
-`haphazard` crate. On a successful `compare_exchange`, we `retire` the pointer
-to the old `WriteDescriptor`. When it is finally reclaimed, its `Drop`
+same thing. We don't have to specify orderings because they're built in by 
+`haphazard`. On a successful `compare_exchange`, we `retire` the pointer
+to the old `Descriptor`. When it is finally reclaimed, its `Drop`
 implementation will run and its inner `WriteDescriptor` will also get reclaimed
 safely.
 
