@@ -1,2 +1,0 @@
-Note
-For debug, enter in a concrete ptr so that when it shows up in error message you know where it comes from

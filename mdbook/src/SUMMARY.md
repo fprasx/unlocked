@@ -6,7 +6,6 @@
   - [A Message](./intro/message.md)
 - [Concurrency](./concurrency/intro.md)
   - [Keywords](./concurrency/keywords.md)
-  - [Concepts](./concurrency/concepts.md)
 - [Atomics](./atomics/intro.md)
   - [What are Memory Orderings?](./atomics/memory_orderings.md)
   - [Compare-and-Swap](./atomics/cas.md)
