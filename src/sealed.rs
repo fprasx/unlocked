@@ -48,8 +48,7 @@ struct WriteDescriptor<'a, T: Sized> {
     _boo: PhantomData<T>, // New and old are transmuted T's
 }
 
-impl<'a, T> Descriptor<'a, T>
-{
+impl<'a, T> Descriptor<'a, T> {
     fn new(pending: *mut Option<WriteDescriptor<'a, T>>, size: usize) -> Self {
         Descriptor {
             // # Safety
@@ -161,42 +160,41 @@ where
         }
     }
 
-    
-    /// Complete the given write operation, set the current write operation to None
-    fn complete_write(&self, pending: *mut Option<WriteDescriptor<T>>) {
-        // If cas of actual value fails, someone else did the write
-        // Result of cmpxchng doesn matter
-        if let Some(writedesc) = unsafe { &*pending } {
-            let _ = AtomicU64::compare_exchange(
-                writedesc.location,
-                writedesc.old,
-                writedesc.new,
-                Ordering::AcqRel,
-                Ordering::Relaxed,
-            );
+/// Complete the given write operation, set the current write operation to None
+fn complete_write(&self, pending: *mut Option<WriteDescriptor<T>>) {
+    // If cas of actual value fails, someone else did the write
+    // Result of cmpxchng doesn matter
+    if let Some(writedesc) = unsafe { &*pending } {
+        let _ = AtomicU64::compare_exchange(
+            writedesc.location,
+            writedesc.old,
+            writedesc.new,
+            Ordering::AcqRel,
+            Ordering::Relaxed,
+        );
 
-            let new_writedesc = WriteDescriptor::<T>::new_none_as_ptr();
+        let new_writedesc = WriteDescriptor::<T>::new_none_as_ptr();
 
-            let mut hp = HazardPointer::new_in_domain(&self.domain);
+        let mut hp = HazardPointer::new_in_domain(&self.domain);
 
-            let old = unsafe {
-                self.descriptor
-                    .load(&mut hp)
-                    .unwrap()
-                    .pending
-                    // # Safety
-                    // new_writedesc conforms to the requirements of HazAtomicPtr::new()
-                    // because it comes from Box::into_raw and is a valid WriteDescriptor
-                    .swap_ptr(new_writedesc)
-            };
+        let old = unsafe {
+            self.descriptor
+                .load(&mut hp)
+                .unwrap()
+                .pending
+                // # Safety
+                // new_writedesc conforms to the requirements of HazAtomicPtr::new()
+                // because it comes from Box::into_raw and is a valid WriteDescriptor
+                .swap_ptr(new_writedesc)
+        };
 
-            // # Safety
-            // We are the only thread that will retire this pointer because
-            // only one thread can get the result of the swap (this one).
-            // Two threads couldn't have performed a swap and both got this pointer.
-            unsafe { old.unwrap().retire_in(&self.domain) };
-        }
+        // # Safety
+        // We are the only thread that will retire this pointer because
+        // only one thread can get the result of the swap (this one).
+        // Two threads couldn't have performed a swap and both got this pointer.
+        unsafe { old.unwrap().retire_in(&self.domain) };
     }
+}
 
     pub fn push(&self, elem: T) {
         let backoff = Backoff::new(); // Backoff causes significant speedup
@@ -233,7 +231,7 @@ where
                 // The `transmute_copy` is safe because we have ensured that T is the correct size at compile time
                 unsafe { mem::transmute_copy::<T, u64>(&elem) },
                 // Load from the AtomicU64, which really containes the bytes for T
-                last_elem.load(Ordering::Acquire), 
+                last_elem.load(Ordering::Acquire),
                 last_elem,
             );
 
@@ -327,7 +325,7 @@ where
                     replaced.unwrap().retire_in(&self.domain);
                 }
 
-                // # Safety 
+                // # Safety
                 // TODO: address this in macro
                 // This is ok because we ensure T is the correct size at compile time
                 // We also know that elem is a valid T because it was transmuted into a usize
@@ -502,8 +500,7 @@ where
     }
 }
 
-impl<T> Drop for Descriptor<'_, T>
-{
+impl<T> Drop for Descriptor<'_, T> {
     fn drop(&mut self) {
         // # Safety
         // The pointer is valid because it's from Box::into_raw
@@ -514,7 +511,7 @@ impl<T> Drop for Descriptor<'_, T>
                     .swap_ptr(ptr::null_mut())
                     .unwrap()
                     .into_inner()
-                    .as_ptr()
+                    .as_ptr(),
             );
         }
     }
@@ -524,10 +521,10 @@ impl<T> Drop for Descriptor<'_, T>
 mod tests {
     use super::*;
     extern crate std;
-use std::sync::atomic::{AtomicIsize, Ordering};
-use std::sync::Arc;
-use std::thread::{self, JoinHandle};
-use std::vec::Vec;
+    use std::sync::atomic::{AtomicIsize, Ordering};
+    use std::sync::Arc;
+    use std::thread::{self, JoinHandle};
+    use std::vec::Vec;
     #[test]
     fn size_starts_at_0() {
         let sv = SecVec::<usize>::new();
