@@ -160,41 +160,41 @@ where
         }
     }
 
-/// Complete the given write operation, set the current write operation to None
-fn complete_write(&self, pending: *mut Option<WriteDescriptor<T>>) {
-    // If cas of actual value fails, someone else did the write
-    // Result of cmpxchng doesn matter
-    if let Some(writedesc) = unsafe { &*pending } {
-        let _ = AtomicU64::compare_exchange(
-            writedesc.location,
-            writedesc.old,
-            writedesc.new,
-            Ordering::AcqRel,
-            Ordering::Relaxed,
-        );
+    /// Complete the given write operation, set the current write operation to None
+    fn complete_write(&self, pending: *mut Option<WriteDescriptor<T>>) {
+        // If cas of actual value fails, someone else did the write
+        // Result of cmpxchng doesn matter
+        if let Some(writedesc) = unsafe { &*pending } {
+            let _ = AtomicU64::compare_exchange(
+                writedesc.location,
+                writedesc.old,
+                writedesc.new,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            );
 
-        let new_writedesc = WriteDescriptor::<T>::new_none_as_ptr();
+            let new_writedesc = WriteDescriptor::<T>::new_none_as_ptr();
 
-        let mut hp = HazardPointer::new_in_domain(&self.domain);
+            let mut hp = HazardPointer::new_in_domain(&self.domain);
 
-        let old = unsafe {
-            self.descriptor
-                .load(&mut hp)
-                .unwrap()
-                .pending
-                // # Safety
-                // new_writedesc conforms to the requirements of HazAtomicPtr::new()
-                // because it comes from Box::into_raw and is a valid WriteDescriptor
-                .swap_ptr(new_writedesc)
-        };
+            let old = unsafe {
+                self.descriptor
+                    .load(&mut hp)
+                    .unwrap()
+                    .pending
+                    // # Safety
+                    // new_writedesc conforms to the requirements of HazAtomicPtr::new()
+                    // because it comes from Box::into_raw and is a valid WriteDescriptor
+                    .swap_ptr(new_writedesc)
+            };
 
-        // # Safety
-        // We are the only thread that will retire this pointer because
-        // only one thread can get the result of the swap (this one).
-        // Two threads couldn't have performed a swap and both got this pointer.
-        unsafe { old.unwrap().retire_in(&self.domain) };
+            // # Safety
+            // We are the only thread that will retire this pointer because
+            // only one thread can get the result of the swap (this one).
+            // Two threads couldn't have performed a swap and both got this pointer.
+            unsafe { old.unwrap().retire_in(&self.domain) };
+        }
     }
-}
 
     pub fn push(&self, elem: T) {
         let backoff = Backoff::new(); // Backoff causes significant speedup
