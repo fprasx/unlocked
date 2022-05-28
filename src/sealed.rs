@@ -49,8 +49,6 @@ struct WriteDescriptor<'a, T: Sized> {
 }
 
 impl<'a, T> Descriptor<'a, T>
-where
-    T: Send,
 {
     fn new(pending: *mut Option<WriteDescriptor<'a, T>>, size: usize) -> Self {
         Descriptor {
@@ -90,7 +88,7 @@ impl<'a, T> WriteDescriptor<'a, T> {
 
 impl<'a, T> fmt::Debug for SecVec<'a, T>
 where
-    T: Copy + Send + Sync,
+    T: Copy,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SecVec")
@@ -103,7 +101,7 @@ where
 
 impl<'a, T> SecVec<'a, T>
 where
-    T: Sized + Copy + Sync + Send,
+    T: Sized + Copy + Send + Sync,
 {
     /// Return of new instance of a SecVec, with capacity 0 and size 0;
     pub fn new() -> Self {
