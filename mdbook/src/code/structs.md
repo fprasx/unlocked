@@ -98,7 +98,7 @@ they dereference the pointer.
                  /     \
                 /       \
            +---+        +----+
-          /                   \ 
+          /                   \
          /         ->          \
         v                       v
        Old                      New

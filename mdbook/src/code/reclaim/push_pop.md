@@ -202,7 +202,7 @@ This stuff is all the same as before.
 ```
 
 The `compare_exchange` syntax is slightly different, but it's doing the exact
-same thing. We don't have to specify orderings because they're built in by 
+same thing. We don't have to specify orderings because they're built in by
 `haphazard`. On a successful `compare_exchange`, we `retire` the pointer
 to the old `Descriptor`. When it is finally reclaimed, its `Drop`
 implementation will run and its inner `WriteDescriptor` will also get reclaimed

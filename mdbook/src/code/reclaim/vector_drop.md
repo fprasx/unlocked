@@ -33,7 +33,7 @@ where
             };
             unsafe {
                 // # Safety
-                // We have recreated the exact same layout used to alloc the ptr in 
+                // We have recreated the exact same layout used to alloc the ptr in
                 // `allocate_bucket`. We know the ptr isn't null because of the filter
                 allocator.deallocate(
                     NonNull::new(ptr.load(Ordering::Relaxed) as *mut u8).unwrap(),
@@ -44,10 +44,10 @@ where
 
         // Retiring the current desc and wdesc
         // # Safety
-        // Since we have &mut self, we have exclusive access, so we can retire the 
+        // Since we have &mut self, we have exclusive access, so we can retire the
         // desc and wdesc ptrs.
         //
-        // It is safe to dereference the ptr to the desc because it is valid because 
+        // It is safe to dereference the ptr to the desc because it is valid because
         // it was created with Descriptor::new_as_ptr.
         let desc = self.descriptor.load_ptr();
         unsafe {

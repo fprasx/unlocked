@@ -1,7 +1,8 @@
 # Reflections
 
-better to gain an intuition on atomic orderings
-    - makes writing correct code easier
+Here are some reflections on the process of writing the vector and learning about concurrent programming.
+
+better to gain an intuition on atomic orderings - makes writing correct code easier
 
 always read teh safety contract
 

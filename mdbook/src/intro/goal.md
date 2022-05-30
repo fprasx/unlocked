@@ -16,22 +16,22 @@ show you a interesting area of computer science and a beautiful language!
 
 ## Topics We'll Cover
 
--   Concurrency
-    -   Cache
-    -   Exponential Backoff
--   Atomics
-    -   Memory Orderings
-    -   Compare-and-Swap
--   Memory Management
-    -   Allocations in Rust
-    -   Hazard Pointers
--   Using Rust
-    -   `Box`
-    -   `Drop`
--   Using `unsafe` Rust
-    -   Raw Pointers
-    -   How to write `unsafe` code
--   **Anything else I find interesting!**
+- Concurrency
+  - Cache
+  - Exponential Backoff
+- Atomics
+  - Memory Orderings
+  - Compare-and-Swap
+- Memory Management
+  - Allocations in Rust
+  - Hazard Pointers
+- Using Rust
+  - `Box`
+  - `Drop`
+- Using `unsafe` Rust
+  - Raw Pointers
+  - How to write `unsafe` code
+- **Anything else I find interesting!**
 
 ## Necessary Experience
 
