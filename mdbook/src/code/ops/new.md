@@ -84,9 +84,11 @@ use core::sync::atomic::{Ordering, AtomicPtr};
 
 fn main() {
     let ptr = new_descriptor();
+    // Use the pointer to the Descriptor
     let d = unsafe { &*ptr.load(Ordering::Acquire) };
 }
 
+// Return a pointer to a Descriptor
 fn new_descriptor() -> AtomicPtr<Descriptor> {
     let d = Descriptor { size: 0, write: None };
     AtomicPtr::new(&d as *const _ as *mut _)
@@ -122,12 +124,15 @@ the stack**. When `new_descriptor` returns, the local variable `d: Descriptor`
 get's destroyed, and the pointer we made from the reference is invalidated.
 Thus, we `use-after-free` when we deference a freed allocation.
 
-This is the danger of using raw pointers. With references, Rust will keep the
-value alive until there are no references to it and it's safe to drop at the end
-of a scope.
+This is the danger of using raw pointers. If we just passed on the reference
+`Descriptor`, `Rust` would
+[promote](https://rust-lang.github.io/rfcs/3027-infallible-promotion.html) that
+value to have a `'static` lifetime if possible, or return an error if not. With
+raw pointers, `Rust` doesn't manage lifetimes, so we have to ensure that our
+pointers are valid.
 
-This example also highlights why only dereferencing a raw pointer is `unsafe`.
-It's perfectly safe to make one, but we have no guarantees about what it's
-pointing to, and that's why the dereference is `unsafe`.
+This is why only dereferencing a raw pointer is `unsafe`. It's perfectly safe to
+make one, but we have no guarantees about what it's pointing to, and that's why
+the dereference is `unsafe`.
 
 Thank you `Miri`!

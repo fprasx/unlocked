@@ -1,3 +1,8 @@
+> You can read the code we'll write and the code for the book
+> [here](https://github.com/fprasx/unlocked). The main files for the `Rust` code
+> are [leaky.rs](https://github.com/fprasx/unlocked/blob/main/src/leaky.rs) and
+> [sealed.rs](https://github.com/fprasx/unlocked/blob/main/src/sealed.rs).
+
 # The Goal
 
 This book has a few goals.
@@ -16,22 +21,22 @@ show you a interesting area of computer science and a beautiful language!
 
 ## Topics We'll Cover
 
-- Concurrency
-  - Cache
-  - Exponential Backoff
-- Atomics
-  - Memory Orderings
-  - Compare-and-Swap
-- Memory Management
-  - Allocations in Rust
-  - Hazard Pointers
-- Using Rust
-  - `Box`
-  - `Drop`
-- Using `unsafe` Rust
-  - Raw Pointers
-  - How to write `unsafe` code
-- **Anything else I find interesting!**
+-   Concurrency
+    -   Cache
+    -   Exponential Backoff
+-   Atomics
+    -   Memory Orderings
+    -   Compare-and-Swap
+-   Memory Management
+    -   Allocations in Rust
+    -   Hazard Pointers
+-   Using Rust
+    -   `Box`
+    -   `Drop`
+-   Using `unsafe` Rust
+    -   Raw Pointers
+    -   How to write `unsafe` code
+-   **Anything else I find interesting!**
 
 ## Necessary Experience
 
@@ -51,4 +56,4 @@ chapters of [The Book](https://doc.rust-lang.org/book/), you should be fine.
 Even if not, as long as you understand most of Rust syntax and are fine with
 looking something up every once in a while, you'll be fine.
 [Chapter 16](https://doc.rust-lang.org/book/ch16-00-concurrency.html) is very
-helpful though as it's the chapter on concurrency.
+helpful as well as it's the chapter on concurrency.

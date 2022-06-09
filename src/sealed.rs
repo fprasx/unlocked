@@ -417,7 +417,8 @@ where
         //
         // The situation is when we allocate the memory, and then try to CAS a new value in:
         // (AcqRel, Relaxed) => intrinsics::atomic_cxchg_acqrel_failrelaxed(dst, old, new),
-        //                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ using uninitialized data, but this operation requires initialized memory
+        //                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ using uninitialized data, 
+        //                                                                                 but this operation requires initialized memory
         // This shouldn't be an actual issue since the old value is never use, so might switch back to allocate (regular)
         // TODO: Maybe use MaybeUninit?
         let allocation = allocator.allocate_zeroed(layout);
