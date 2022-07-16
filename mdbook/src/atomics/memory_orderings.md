@@ -121,7 +121,7 @@ Note: Although the lock metaphor is helpful for understanding `Acquire` and
 An `AcqRel` load/store is just `Release` for stores and `Acquire` for loads.
 When used with an operation that loads _and_ stores, it is both `Acquire` and
 `Release`. `AcqRel`'s main use case is Read-Modify-Write operations, like
-loading a variable, adding one, and storing it back. We want to the load to be
+loading a variable, adding one, and storing it back. We want the load to be
 `Acquire` and the store `Release` so we would use `AcqRel` to achieve this.
 Foreshadowing: this ordering will play a prominent part later on!
 
