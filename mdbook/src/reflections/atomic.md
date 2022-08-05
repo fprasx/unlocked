@@ -1,7 +1,7 @@
 # Atomic Intuition
 
 It's pretty safe to say that atomics are confusing. Just the context itself is
-confusing, that CPUs and compilers can reorder instructions. I found that as I
+confusing: that CPUs and compilers can reorder instructions. I found that as I
 developed an intuition for atomics, it became easier to reason about my code and
 its correctness.
 
@@ -12,9 +12,9 @@ synchronizes with that `Release` store", you gain confidence and it becomes
 easier to get going.
 
 The biggest moment for me was when I stopped having to look at the Standard
-Library Documentation every time I used an atomic variable. I had an intuitive
+Library Documentation every time I used an atomic. I had developed an intuitive
 sense of the orderings, and I could see why each one was useful in my code. At
-first, I though the orderings seemed a little random. However, as I started to
+first, I thought the orderings seemed a little random. As I started to
 use atomics more and more, I saw how the orderings fit in nicely with actual use
 cases, from using `Acquire` to load a bucket to `AcqRel` in `compare_exchange`.
 
