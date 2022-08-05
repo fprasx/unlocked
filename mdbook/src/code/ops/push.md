@@ -139,10 +139,10 @@ Let's make our new `WriteDescriptor` now:
 
 ```
 
-For now we are assuming that the vector is only storing values 8 bytes or
-smaller, therefore it is safe to `transmute_copy` to an `AtomicU64`. I plan on
-writing a macro that produces different implementations of the vector with
-different atomic types when storing types of different sizes. For example,
+For now we are assuming that the vector is only storing values 8 bytes big,
+therefore it is safe to `transmute_copy` to an `AtomicU64`. I plan on writing a
+macro that produces different implementations of the vector with different
+atomic types when storing types of different sizes. For example,
 `SecVec<(i8, i8)>` would store the data in `AtomicU16`. This would save on
 space. I don't think the vector would work for zero-sized types because of how
 we `transmute`. It would also be very inefficient because of all the unnecessary
